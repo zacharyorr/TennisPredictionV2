@@ -14,7 +14,7 @@ import math
 import time
 import winsound
 
-wd = 'C:/Users/zacha/PycharmProjects/TennisPrediction'
+wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
 os.chdir(wd)
 pd.options.display.max_columns = None
 pd.options.display.width = None

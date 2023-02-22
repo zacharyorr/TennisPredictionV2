@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from sklearn.utils import shuffle
 
 
-wd = 'C:/Users/zacha/PycharmProjects/TennisPrediction'
+wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
 os.chdir(wd)
 pd.options.display.max_columns = None
 pd.options.display.width = None

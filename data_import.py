@@ -3,7 +3,7 @@ from datetime import datetime
 import sys
 import os
 
-wd = 'C:/Users/zacha/PycharmProjects/TennisPrediction'
+wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
 os.chdir(wd)
 
 def pull_atp(start_year, end_year):
