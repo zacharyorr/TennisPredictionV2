@@ -13,13 +13,14 @@ import datetime
 import math
 import time
 import winsound
+from tqdm import tqdm
 
 wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
 os.chdir(wd)
 pd.options.display.max_columns = None
 pd.options.display.width = None
 pd.options.display.max_rows = 10000
-
+tqdm.pandas(desc='Progress', colour='WHITE')
 
 def read_files():
     # imports and returns the five raw data files pulled from github.
@@ -1153,10 +1154,89 @@ def custom_round(x, base):
     return int(base * round(float(x)/base))
 
 
-def to_nn(match_df):
+def to_parquet(match_df):
     """saves the final output to a csv"""
-    match_df.to_csv(f'{wd}/Data/output_df3.csv')
-    print(f'CSV saved to {wd}/Data/output_df.csv')
+    match_df.to_parquet(f'{wd}/Data/output_df.parquet')
+    print(f'CSV saved to {wd}/Data/output_df.parquet')
+
+def momentum(match_df):
+    df = match_df.copy()
+    output_df = match_df.copy()
+    # print(df.loc[df.p1_id == 104925, :])
+    df['dt_index'] = df['tourney_date'] + df['match_num'].astype('timedelta64[s]')
+    output_df['dt_index'] = output_df['tourney_date'] + output_df['match_num'].astype('timedelta64[s]')
+
+    p1_df = df.loc[:, ['p1_id', 'dt_index']].rename(columns={'p1_id':'player_id'})
+    p1_df['winner'] = 1
+
+    p2_df = df.loc[:, ['p2_id', 'dt_index']].rename(columns={'p2_id':'player_id'})
+    p2_df['winner'] = -1
+
+    df = pd.concat([p1_df,p2_df], ignore_index=True)
+    df = df.sort_values(['player_id','dt_index'])
+
+    bd_shape = df.shape[0]
+    df = df.drop_duplicates(subset=['player_id','dt_index'])
+    print(f'Dropped {df.shape[0] - bd_shape:.0f} duplicate entries')
+
+    grouped = df.groupby(['player_id', ((df.winner != df.winner.shift(1)).cumsum())], group_keys=False)
+    print(f'Calculating win-streak...')
+    df['win_streak'] = grouped['winner'].progress_apply(lambda x: x.eq(1).cumsum())
+    df['win_streak'] = df.groupby('player_id')['win_streak'].shift(1).fillna(0).astype(int)
+    print(f'\nCalculating loss-streak...')
+    df['loss_streak'] = grouped['winner'].progress_apply(lambda x: x.eq(-1).cumsum())
+    df['loss_streak'] = df.groupby('player_id')['loss_streak'].shift(1).fillna(0).astype(int)
+
+    # df = df.set_index([''])
+    #
+    for player in ['p1','p2']:
+        output_df = pd.merge(output_df, df, how='left', left_on=[f'{player}_id','dt_index'], right_on=['player_id','dt_index'], suffixes=('','_y'))
+        output_df = output_df.drop(['player_id','winner'], axis=1)
+        output_df = output_df.rename(columns={'win_streak':f'{player}_win_streak','loss_streak': f'{player}_loss_streak'})
+
+    output_df = output_df.sort_values('dt_index')
+    # print(df[df.player_id == 104925].head(50))
+    # print(output_df[(output_df.p1_id == 104925) | (output_df.p2_id == 104925)].head(50))
+
+    return output_df
+
+def surfaces(match_df):
+    df = match_df.copy()
+    df = df.reset_index()
+    # print(df.head(10))
+    print(f'Number of NA in surface type: {df.surface.isna().sum()}')
+    dummies = pd.get_dummies(df['surface'])
+    df = df.join(dummies)
+
+    return df
+
+def surface_wins(match_df):
+    df = match_df.copy()
+    surfaces = pd.unique(df.surface)
+    # grouped = df.groupby([''])
+    # for surface in surfaces:
+    print(df.shape[0])
+    df['dt_index'] = df['tourney_date'] + df['match_num'].astype('timedelta64[s]')
+    p1_df = df.loc[:, ['p1_id','surface','dt_index']].rename(columns={'p1_id': 'player_id'})
+    p1_df['winner'] = 1
+    print(df.shape[0])
+
+    p2_df = df.loc[:, ['p2_id','surface','dt_index']].rename(columns={'p2_id': 'player_id'})
+    p2_df['winner'] = 0
+    print(df.shape[0])
+
+    player_df = pd.concat([p1_df, p2_df]).reset_index()
+    dummies = pd.get_dummies(player_df['surface'])
+    print(player_df.shape[0])
+
+    player_df = player_df.join(dummies)
+    print(player_df.shape[0])
+    for surface in surfaces:
+        player_df[f'{surface}_wins'] = player_df[surface] * player_df.winner
+        player_df[f'{surface}_losses'] = player_df[surface] * (1-player_df.winner)
+    player_df = player_df.sort_values(['player_id','dt_index'])
+
+    print(player_df[player_df.player_id == 104925].head(20))
 
 
 def main():
@@ -1178,29 +1258,29 @@ def main():
     match_df = remove_features(match_df)
 
     # pulls tournament names, removes the year, to create unique key for every tournament (non-year dependent)
-    tourney_list, no_year_tourney_list = get_tournaments(match_df)
+    # tourney_list, no_year_tourney_list = get_tournaments(match_df)
 
     # ACTIVATE THE BELOW FUNCTION TO RESET CITIES
     # tourney_list = pull_cities(no_year_tourney_list)
 
     # attaches tournaments to their appropriate countries, to compute home court advantage
-    match_df = attach_tournaments(match_df, no_year_tourney_list)
+    # match_df = attach_tournaments(match_df, no_year_tourney_list)
 
     # change to one-hot encoding of bo5, p1/p2 hand,
-    match_df = one_hot_bof5(match_df)
+    # match_df = one_hot_bof5(match_df)
 
     # removes a section of the dataframe, for computational purposes. if computing full dataset, comment out these lines
-    match_df = match_df[700000:]
+    match_df = match_df[810000:]
     # match_df = match_df[match_df['tourney_level'] == 'ATP']
 
     # pull rankings and append to dataframe
-    match_df = set_h2h(match_df, rankings_df)
+    # match_df = set_h2h(match_df, rankings_df)
 
     # calculates player scores to input into Glicko-2 ranking system
     winner_weight = .6
     sets_weight = .2
     games_weight = .2
-    match_df = winner_points(match_df, winner_weight, sets_weight, games_weight)
+    # match_df = winner_points(match_df, winner_weight, sets_weight, games_weight)
 
 
     # using the following input parameters, calculates the Glicko-2 ratings of players in dataset
@@ -1210,7 +1290,7 @@ def main():
     rating_period = 40
     show_rankings = 100
     rd_cutoff = 80
-    match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
+    # match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
 
     # adds date features (year, sin(day), cos(day)) to the dataframe
     match_df = date_features(match_df)
@@ -1221,12 +1301,12 @@ def main():
     # calculates a rolling sum of p1/p2 wins and losses at all levels in the following time periods
     time_periods = ['l6m', 'l1y', 'career']
     rolling_windows = ['182d', '365d', '30000d']
-    match_df = player_wins(match_df, time_periods, rolling_windows)
+    # match_df = player_wins(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of p1/p2 wins and losses at their current tournament in the following time periods
     time_periods = ['l1y', 'l3y', 'career']
     rolling_windows = ['365d', '1095d', '30000d']
-    match_df = tourney_history(match_df, time_periods, rolling_windows)
+    # match_df = tourney_history(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of time on court for all players in the following time periods.
     # fills missing match time data with averages; rounds match_games to games_base and rounds year to year_base
@@ -1234,7 +1314,16 @@ def main():
     year_base = 10
     time_periods = ['last_match', 'last_3_matches', 'last_2_weeks']
     rolling_windows = [1, 3, '14d']
-    match_df = time_on_court(match_df, games_base, year_base, time_periods, rolling_windows)
+    # match_df = time_on_court(match_df, games_base, year_base, time_periods, rolling_windows)
+
+    # adds momentum in the form of win and loss streak
+    # match_df = momentum(match_df)
+
+    # adds one-hot variables for surface type
+    match_df = surfaces(match_df)
+
+    # calculates player strength on surface (wins and losses)
+    match_df = surface_wins(match_df)
 
     # splits the dataframe, for half of the dataset, makes p1 the winner, and for the other half, makes p2 the winner
     # match_df = split_df_2(match_df)
@@ -1243,12 +1332,13 @@ def main():
     # duplicates the dataframe to make the neural network symmetrical
     # match_df = duplicate_df(match_df)
 
+    # match_df = momentum(match_df)
 
-    print(match_df.head(10))
-    print(match_df.tail(10))
+    # print(match_df.head(10))
+    # print(match_df.tail(10))
 
-    # saves the dataframe as a csv, outputs necessary features to the neural network
-    to_nn(match_df)
+    # saves the dataframe as a parquet, outputs necessary features to the neural network
+    # to_parquet(match_df)
 
     # sound to notify on code completion
     winsound.Beep(500, 100)

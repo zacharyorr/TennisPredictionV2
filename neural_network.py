@@ -98,13 +98,18 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 input_size = 6
 hidden_size = 256
 num_classes = 2
-num_epochs = 100
+num_epochs = 300
 batch_size = 64
 learning_rate = .001
 test_year = '2022-01-01'
 
 # import data
 match_df = pd.read_csv(f'{wd}/Data/output_df.csv',index_col=0, header=0, parse_dates=['tourney_date'])
+
+match_df = match_df.loc[match_df['ATP'] == 1, :]
+match_df = match_df.loc[match_df['year'] > 2012, :]
+print(match_df.head(10))
+
 train_size = match_df[match_df['tourney_date'] < pd.to_datetime(test_year, format='%Y-%m-%d')].shape[0] / match_df.shape[0]
 print(f'Train split: {train_size*100:.2f}%')
 print(f'Test split: {(1-train_size)*100:.2f}%')
@@ -143,9 +148,10 @@ match_df = match_df.drop(['p1_seed', 'p1_ht', 'p1_age', 'p2_seed', 'p2_ht', 'p2_
        'p1_rank_points', 'p2_rank', 'p2_rank_points', 'p1_home',
        'p2_home', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games'], axis=1)
 
+
 # match_df = match_df.drop(['p1_time_oncourt_last_match','p1_time_oncourt_last_3_matches','p1_time_oncourt_last_2_weeks',
 #                           'p2_time_oncourt_last_match','p2_time_oncourt_last_3_matches','p2_time_oncourt_last_2_weeks'],axis=1)
-
+#
 # match_df = match_df.drop(['p1_glicko_rating','p1_glicko_deviation','p1_glicko_volatility',
 #                           'p2_glicko_rating','p2_glicko_deviation','p2_glicko_volatility'],axis=1)
 
@@ -159,7 +165,7 @@ match_df = match_df.drop(['p1_seed', 'p1_ht', 'p1_age', 'p2_seed', 'p2_ht', 'p2_
 #        'p2_l_C_career', 'p2_w_ATP_l6m', 'p2_w_ATP_l1y', 'p2_w_ATP_career',
 #        'p2_l_ATP_l6m', 'p2_l_ATP_l1y', 'p2_l_ATP_career'],axis=1)
 
-# match_df = match_df.drop(['p1_h2h_wins', 'p2_h2h_wins'],axis=1)
+match_df = match_df.drop(['p1_h2h_wins', 'p2_h2h_wins'],axis=1)
 
 # match_df = match_df.drop(['p1_w_tourney_l1y',
 #        'p2_l_tourney_l1y', 'p1_w_tourney_l3y', 'p2_l_tourney_l3y',
@@ -185,10 +191,10 @@ X_train = sc.fit_transform(X_train)
 X_test = sc.transform(X_test)
 
 
-mask = X_test[:,16] > 0
-X_test = X_test[mask]
-baseline_test = baseline_test[mask]
-y_test = y_test[mask]
+# mask = X_test[:,16] > 0
+# X_test = X_test[mask]
+# baseline_test = baseline_test[mask]
+# y_test = y_test[mask]
 
 trainset = dataset(X_train,y_train)
 trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=False)
@@ -276,11 +282,11 @@ ax2.tick_params(axis='y', labelcolor=color)
 
 fig.tight_layout()
 # plt.show()
-fig.savefig(f'{wd}/loss_and_accuracy2test.png')
+fig.savefig(f'{wd}/model_2_23_last15k_{losses[-1]:.2f}.png')
 plt.clf()
 
 
-torch.save(model.state_dict(), f'{wd}/model2test.pth')
+torch.save(model.state_dict(), f'{wd}/model_2_23_last15k_{losses[-1]:.2f}.pth')
 
 
 #---------------------------------------------
