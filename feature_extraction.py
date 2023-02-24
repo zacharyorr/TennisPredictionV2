@@ -472,6 +472,7 @@ def p1_score_calc(row, sets_weight, games_weight):
     score += (sets_weight * sets_won) / row.num_sets
     return score
 
+
 def p2_score_calc(row, sets_weight, games_weight):
     score = row.p2_score
     sets_won = 0
@@ -865,6 +866,7 @@ def date_features(match_df):
 
     return match_df
 
+
 def tourney_level(match_df):
     """this function consolidates the many tournament levels into 3: ATP, C, and S. it adds this level as a new
     column and returns the modified dataframe"""
@@ -872,6 +874,7 @@ def tourney_level(match_df):
     match_df['tourney_level_consolidated'] = match_df['tourney_level_consolidated'].replace('G','ATP').replace('M','ATP').replace('A','ATP').replace('D','ATP').replace('F','ATP').replace('15','S').replace('25','S')
     print(f'Consolidated tournament levels into: {match_df.tourney_level_consolidated.unique()}.\n')
     return match_df
+
 
 def player_wins(match_df, time_periods, rolling_windows):
     """this function calculates a rolling sum of each player's wins and losses over the specified time periods"""
@@ -945,6 +948,7 @@ def player_wins(match_df, time_periods, rolling_windows):
     df = df.rename(columns= dict(zip(player_colnames,p2_colnames)))
 
     return df
+
 
 def tourney_history(match_df, time_periods, rolling_windows):
     # this section calculates historical player performance at the tournament in question, over the periods
@@ -1043,6 +1047,7 @@ def tourney_history(match_df, time_periods, rolling_windows):
 
     return df
 
+
 def split_df_2(match_df):
     print('\nSplitting dataframe...')
     """currently, the winning player is always player 1. In this condition, the dataframe would be found to be biased
@@ -1091,6 +1096,7 @@ def split_df_2(match_df):
     match_df = pd.concat(combined_df, axis=0).sort_index()
 
     return match_df
+
 
 def time_on_court(match_df, games_base, year_base, time_periods, rolling_windows):
     """this section computes time on court for each player in each match through the time periods passed to the function.
@@ -1150,6 +1156,7 @@ def time_on_court(match_df, games_base, year_base, time_periods, rolling_windows
 
     return df
 
+
 def custom_round(x, base):
     return int(base * round(float(x)/base))
 
@@ -1158,6 +1165,7 @@ def to_parquet(match_df):
     """saves the final output to a csv"""
     match_df.to_parquet(f'{wd}/Data/output_df.parquet')
     print(f'CSV saved to {wd}/Data/output_df.parquet')
+
 
 def momentum(match_df):
     df = match_df.copy()
@@ -1222,7 +1230,7 @@ def surface_wins(match_df):
     print(df.shape[0])
 
     p2_df = df.loc[:, ['p2_id','surface','dt_index']].rename(columns={'p2_id': 'player_id'})
-    p2_df['winner'] = 0
+    p2_df['winner'] = -1
     print(df.shape[0])
 
     player_df = pd.concat([p1_df, p2_df]).reset_index()
@@ -1232,11 +1240,22 @@ def surface_wins(match_df):
     player_df = player_df.join(dummies)
     print(player_df.shape[0])
     for surface in surfaces:
-        player_df[f'{surface}_wins'] = player_df[surface] * player_df.winner
-        player_df[f'{surface}_losses'] = player_df[surface] * (1-player_df.winner)
-    player_df = player_df.sort_values(['player_id','dt_index'])
+        player_df[f'{surface}_result'] = player_df[surface] * player_df.winner
 
-    print(player_df[player_df.player_id == 104925].head(20))
+    player_df = player_df.sort_values(['player_id','dt_index'])
+    grouped = player_df.groupby(['player_id'])
+    for surface in surfaces:
+        player_df[f'{surface}_wins'] = grouped[f'{surface}_result'].progress_apply(lambda x: x.eq(1).cumsum())
+        player_df[f'{surface}_losses'] = grouped[f'{surface}_result'].progress_apply(lambda x: x.eq(-1).cumsum())
+
+    grouped = player_df.groupby(['player_id'])
+    for surface in surfaces:
+        player_df[f'{surface}_wins'] = grouped[f'{surface}_wins'].shift(1).fillna(0).astype(int)
+        player_df[f'{surface}_losses'] = grouped[f'{surface}_losses'].shift(1).fillna(0).astype(int)
+
+
+    # print(player_df[player_df.player_id == 104925].head(20))
+
 
 
 def main():
