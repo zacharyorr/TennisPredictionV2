@@ -1,3 +1,4 @@
 *.csv filter=lfs diff=lfs merge=lfs -text
 Data/*.csv filter=lfs diff=lfs merge=lfs -text
 Data/odds/*.xlsx filter=lfs diff=lfs merge=lfs -text
+Data/*.parquet.gzip filter=lfs diff=lfs merge=lfs -text
