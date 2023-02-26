@@ -98,17 +98,20 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 input_size = 6
 hidden_size = 256
 num_classes = 2
-num_epochs = 300
+num_epochs = 100
 batch_size = 64
 learning_rate = .001
 test_year = '2022-01-01'
 
 # import data
-match_df = pd.read_csv(f'{wd}/Data/output_df.csv',index_col=0, header=0, parse_dates=['tourney_date'])
-
-match_df = match_df.loc[match_df['ATP'] == 1, :]
-match_df = match_df.loc[match_df['year'] > 2012, :]
+# match_df = pd.read_csv(f'{wd}/Data/output_df.csv',index_col=0, header=0, parse_dates=['tourney_date'])
+match_df = pd.read_parquet(f'{wd}/Data/output_df.parquet.gzip')
+match_df = match_df.set_index('dt_index', drop=True).sort_index()
 print(match_df.head(10))
+
+# match_df = match_df.loc[match_df['ATP'] == 1, :]
+# match_df = match_df.loc[match_df['year'] > 2012, :]
+# print(match_df.head(10))
 
 train_size = match_df[match_df['tourney_date'] < pd.to_datetime(test_year, format='%Y-%m-%d')].shape[0] / match_df.shape[0]
 print(f'Train split: {train_size*100:.2f}%')
@@ -165,7 +168,7 @@ match_df = match_df.drop(['p1_seed', 'p1_ht', 'p1_age', 'p2_seed', 'p2_ht', 'p2_
 #        'p2_l_C_career', 'p2_w_ATP_l6m', 'p2_w_ATP_l1y', 'p2_w_ATP_career',
 #        'p2_l_ATP_l6m', 'p2_l_ATP_l1y', 'p2_l_ATP_career'],axis=1)
 
-match_df = match_df.drop(['p1_h2h_wins', 'p2_h2h_wins'],axis=1)
+# match_df = match_df.drop(['p1_h2h_wins', 'p2_h2h_wins'],axis=1)
 
 # match_df = match_df.drop(['p1_w_tourney_l1y',
 #        'p2_l_tourney_l1y', 'p1_w_tourney_l3y', 'p2_l_tourney_l3y',
@@ -176,6 +179,16 @@ match_df = match_df.drop(['p1_h2h_wins', 'p2_h2h_wins'],axis=1)
 # match_df = match_df.loc[:, ['winner','baseline_prediction', 'year', 'best_of_3', 'p1_left_handed', 'p1_right_handed', 'p2_left_handed',
 #        'p2_right_handed', 'day_sin',
 #        'day_cos', 'ATP', 'C', 'S']]
+
+print(match_df.head(10))
+
+# match_df = match_df.drop(['winner_y'], axis=1)
+# match_df = match_df.drop(['p1_win_streak', 'p1_loss_streak', 'p2_win_streak',
+#        'p2_loss_streak', 'Carpet', 'Clay', 'Grass', 'Hard', 'p1_grass_wins',
+#        'p1_grass_losses', 'p1_hard_wins', 'p1_hard_losses', 'p1_clay_wins',
+#        'p1_clay_losses', 'p1_carpet_wins', 'p1_carpet_losses', 'p2_grass_wins',
+#        'p2_grass_losses', 'p2_hard_wins', 'p2_hard_losses', 'p2_clay_wins',
+#        'p2_clay_losses', 'p2_carpet_wins', 'p2_carpet_losses'], axis=1)
 
 X = match_df.copy(deep=True).drop(['winner','baseline_prediction'],axis=1).reset_index(drop=True)
 y = match_df.copy(deep=True)['winner'].reset_index(drop=True)
@@ -191,10 +204,10 @@ X_train = sc.fit_transform(X_train)
 X_test = sc.transform(X_test)
 
 
-# mask = X_test[:,16] > 0
-# X_test = X_test[mask]
-# baseline_test = baseline_test[mask]
-# y_test = y_test[mask]
+mask = X_test[:,16] > 0
+X_test = X_test[mask]
+baseline_test = baseline_test[mask]
+y_test = y_test[mask]
 
 trainset = dataset(X_train,y_train)
 trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=False)
@@ -206,6 +219,7 @@ trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=False)
 
 model = Net2(input_shape=X.shape[1])
 optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=.1)
 loss_fn = nn.BCELoss()
 
 losses = []
@@ -247,6 +261,7 @@ for i in range(num_epochs):
         test_acc = (predicted.reshape(-1).detach().numpy().round() == y_test).mean()
 
     model.train()
+    scheduler.step()
 
 
     # print(predicted)
@@ -282,11 +297,11 @@ ax2.tick_params(axis='y', labelcolor=color)
 
 fig.tight_layout()
 # plt.show()
-fig.savefig(f'{wd}/model_2_23_last15k_{losses[-1]:.2f}.png')
+fig.savefig(f'{wd}/model_2_26_{losses[-1]:.2f}.png')
 plt.clf()
 
 
-torch.save(model.state_dict(), f'{wd}/model_2_23_last15k_{losses[-1]:.2f}.pth')
+torch.save(model.state_dict(), f'{wd}/model_2_26_{losses[-1]:.2f}.pth')
 
 
 #---------------------------------------------
