@@ -14,7 +14,8 @@ import math
 import time
 import winsound
 from tqdm import tqdm
-import geotext
+from geotext import GeoText
+import geograpy
 
 wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
 os.chdir(wd)
@@ -83,44 +84,6 @@ def remove_walkovers(match_df):
         f'\nRemoved {count} walkovers and retirements from the dataset.\nThis represents {100 * count / (match_df.shape[0] + count):.2f}% of the original dataset.')
     return match_df
 
-def split_df(match_df):
-    print('\nSplitting dataframe...')
-    # currently, the winning player is always player 1. In this condition, the dataframe would be found to be biased
-    # by the neural network. Thus, we have to split the dataframe, allowing player 1 to be the winner half the time,
-    # and player 2 to be the winner half of the time.
-
-    # Creates a 'split' key column, defining whether player 0 or 1 will be the winner
-    match_df['split_var'] = np.random.randint(2, size=match_df.shape[0])
-
-    # The next 4 lines are simply for user clarity. They display how many rows were assigned P1 and P2 as winners
-    count_zero = match_df['split_var'][match_df['split_var'] == 0].count()
-    count_one = match_df['split_var'][match_df['split_var'] == 1].count()
-    print(f'setting {count_zero} matches to P1 winner.')
-    print(f'setting {count_one} matches to P2 winner.')
-
-    # Creates 2 dataframes to do modification on; one is all the rows that player 1 is the winner, and the other is
-    # the dataframe where player 2 is the winner
-    p1_winner = match_df[match_df['split_var'] == 0]
-    p2_winner = match_df[match_df['split_var'] == 1]
-
-    # Making a copy to prevent the Copy error
-    p2_winner_copy = p2_winner.copy(deep=True)
-
-    # Moves the columns around for P2 winner dataframe. Moves all columns that start with P1 to the columns that start
-    # with P2
-    for arg in [0, 1]:
-        list = ['winner_', 'loser_']
-        list1 = ['loser_', 'winner_']
-        for i in ['id', 'seed', 'entry', 'name', 'hand', 'ht', 'ioc', 'age']:
-            p2_winner_copy.loc[:, f'{list[arg]}{i}'] = p2_winner.loc[:, f'{list1[arg]}{i}']
-
-    # Creates an empty list, appends both of the split dataframes, then concatenates them
-    combined_df = []
-    combined_df.append(p1_winner)
-    combined_df.append(p2_winner_copy)
-    match_df = pd.concat(combined_df, axis=0).sort_index()
-
-    return match_df
 
 def rename_columns(match_df):
     # Just some housekeeping, changing the syntax of a bunch of columns now that P1 is not always the winner.
@@ -173,6 +136,7 @@ def rename_columns(match_df):
     })
     return match_df
 
+
 def remove_features(match_df):
     print('\nRemoving unneeded features...')
     df = match_df.copy()
@@ -196,6 +160,7 @@ def remove_features(match_df):
                   'p2_bpFaced'
                   ],axis=1)
     return df
+
 
 def pull_cities(tourney_list):
     print('Parsing tournament names from dataset...')
@@ -304,6 +269,7 @@ def pull_cities(tourney_list):
 
     df.to_csv(f'{wd}/Data/country_mapping.csv')
 
+
 def get_tournaments(match_df):
     # Precursor to pulling cities method, molds the data according to the needs of the city parser and wikipedia parser
     match_df['tournament_search'] = match_df['tourney_name'] + ' tennis tournament ' + match_df['tourney_date'].astype(
@@ -311,6 +277,7 @@ def get_tournaments(match_df):
     tourney_list = match_df['tournament_search'].unique()
     no_year_tourney_list = match_df['tourney_name'].unique()
     return tourney_list, no_year_tourney_list
+
 
 def attach_tournaments(match_df, tourney_list):
     print('\nAttaching tournament names...')
@@ -327,9 +294,11 @@ def attach_tournaments(match_df, tourney_list):
     result_df = match_df.join(country_df.set_index('original_tourney_name'), on='tourney_name', validate='m:1')
     return result_df
 
+
 def one_hot_bof5(df):
     # Converts the Best of 5, Country Codes, and Hand features to one_hot features for the NN
 
+    print(f'\nAdding one-hot encoding for features (BO5, Hand)...')
     # Eliminates exhibition matches
     df = df[df['best_of'] != 1]
 
@@ -355,6 +324,7 @@ def one_hot_bof5(df):
     df = df.rename({'L': 'p2_left_handed', 'R': 'p2_right_handed'}, axis=1)
 
     return df
+
 
 def set_h2h(match_df, rankings_df):
     # Sorts the match DataFrame by tournament date. Head to head is date-sensitive so this is needed
@@ -462,6 +432,7 @@ def p1_games(row):
             print(row)
     return p1_games
 
+
 def p1_score_calc(row, sets_weight, games_weight):
     """this function uses the 3 components of the score (outcome, sets won, and games won) to calculate the score
     for player 1 of that match"""
@@ -496,6 +467,7 @@ def winner_points(match_df,winner_score, sets_weight, games_weight):
     count = temp_df.shape[0]
     temp_df = temp_df.dropna(subset=['score']).reset_index()
     rows_removed = count - temp_df.shape[0]
+    print(f'\nCalculating winner & loser scores...')
     print(f'Rows removed due to invalid scores: {rows_removed}')
     strip = temp_df['score'].str.strip()
     df = strip.str.split(pat=' ',expand=True)
@@ -527,133 +499,6 @@ def winner_points(match_df,winner_score, sets_weight, games_weight):
     temp_df['total_games'] = df['total_games']
 
     return temp_df
-
-
-def gluck_gluck(match_df, initial_rating, initial_deviation, initial_volatility, rating_period):
-    """this function is no longer in use. it calculates the glicko rankings for every match played and adds these
-    live ratings to the dataframe. I've switched to Glicko-2 to implement a penalty for long breaks of inactivity"""
-    df = match_df.copy()
-    s1 = pd.Series(df.loc[:, 'p1_id'])
-    s2 = pd.Series(df.loc[:, 'p2_id'])
-    df = pd.concat([s1, s2], ignore_index=True).drop_duplicates(keep='first').reset_index()
-    # print(df.head(50))
-    df.loc[:, 'rating'] = initial_rating
-    df.loc[:, 'deviation'] = initial_deviation
-    df.loc[:, 'volatility'] = initial_volatility
-    df = df.set_index(0, drop=False)
-    df = df.drop(['index'], axis=1)
-    # print(df.head(50))
-
-    df['opponent_elo'] = np.empty((len(df), 0)).tolist()
-    df['opponent_deviation'] = np.empty((len(df), 0)).tolist()
-    df['opponent_volatility'] = np.empty((len(df), 0)).tolist()
-    df['outcome'] = np.empty((len(df), 0)).tolist()
-    df['active'] = 0
-    # print(df.head(50))
-    ranking_df = df
-
-
-    start_date = match_df.copy()['tourney_date'].min()
-    start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-    # print(start_date)
-    rp = int(rating_period)
-
-    glicko_dict = df.copy().to_dict(orient='index')
-    ratings_dict = df.copy().to_dict(orient='index')
-    match_dict = match_df.copy().to_dict(orient='index')
-
-    # set all key:value pairs to Player instances
-    for key in enumerate(df.copy().index):
-        glicko_dict[key[1]] = Player()
-
-
-    rate_period_date = start_date
-
-    while rate_period_date < datetime.datetime.strptime(match_df.copy()['tourney_date'].max(), '%Y-%m-%d'):
-        future_period_date = rate_period_date + datetime.timedelta(days=rp)
-        filtered_dict = {k: v for k, v in match_dict.items() if (
-                    rate_period_date <= datetime.datetime.strptime(v['tourney_date'], '%Y-%m-%d') < future_period_date)}
-
-        for k, v in filtered_dict.items():
-            p1_id = v['p1_id']
-            p1_elo = glicko_dict[p1_id].rating
-            p1_deviation = glicko_dict[p1_id].rd
-            p1_volatility = glicko_dict[p1_id].vol
-
-            p2_id = v['p2_id']
-            p2_elo = glicko_dict[p2_id].rating
-            p2_deviation = glicko_dict[p2_id].rd
-            p2_volatility = glicko_dict[p2_id].vol
-
-            winner = v['winner']
-
-            # ratings_dict[p1_id]['opponent_elo'].append(p2_elo)
-            # ratings_dict[p1_id]['opponent_deviation'].append(p2_deviation)
-            # ratings_dict[p1_id]['opponent_volatility'].append(p2_volatility)
-            # ratings_dict[p2_id]['opponent_elo'].append(p1_elo)
-            # ratings_dict[p2_id]['opponent_deviation'].append(p1_deviation)
-            # ratings_dict[p2_id]['opponent_volatility'].append(p1_volatility)
-            if int(winner) == 0:
-                # ratings_dict[p1_id]['outcome'].append(v['winner_score'])
-                # ratings_dict[p2_id]['outcome'].append(v['loser_score'])
-                ratings_dict[p1_id]['outcome'] = (v['winner_score'])
-                ratings_dict[p2_id]['outcome'] = (v['loser_score'])
-            else:
-                # ratings_dict[p1_id]['outcome'].append(v['loser_score'])
-                # ratings_dict[p2_id]['outcome'].append(v['winner_score'])
-                ratings_dict[p1_id]['outcome'] = (v['loser_score'])
-                ratings_dict[p2_id]['outcome'] = (v['winner_score'])
-            # ratings_dict[p1_id]['active'] = 1
-            # ratings_dict[p2_id]['active'] = 1
-
-            if p1_id == 104745:
-                print(
-                    f'{p1_id}, rating {glicko_dict[p1_id].rating}, RD {glicko_dict[p1_id].rd}, vol {glicko_dict[p1_id].vol}')
-                print(f'Update player count: {glicko_dict[p1_id].counta}')
-                print(f'rating list: {p2_elo}')
-                print(f'rd list: {p2_deviation}')
-                print(f'vol list: {p2_volatility}')
-                print(f'outcome list: {ratings_dict[p1_id]["outcome"]}')
-                print(f'--------------------')
-            if p2_id == 104745:
-                print(f'Update player count: {glicko_dict[p2_id].counta}')
-                print(
-                    f'{p2_id}, rating {glicko_dict[p2_id].rating}, RD {glicko_dict[p2_id].rd}, vol {glicko_dict[p2_id].vol}')
-                print(f'rating list: {p1_elo}')
-                print(f'rd list: {p1_deviation}')
-                print(f'vol list: {p1_volatility}')
-                print(f'outcome list: {ratings_dict[p2_id]["outcome"]}')
-                print(f'--------------------')
-            glicko_dict[p1_id].update_player([p2_elo], [p2_deviation], [ratings_dict[p1_id]['outcome']])
-            glicko_dict[p2_id].update_player([p1_elo], [p1_deviation], [ratings_dict[p2_id]['outcome']])
-            if p1_id == 104745:
-                print(
-                    f'{p1_id}, rating {glicko_dict[p1_id].rating}, RD {glicko_dict[p1_id].rd}, vol {glicko_dict[p1_id].vol}')
-            if p2_id == 104745:
-                print(
-                    f'{p2_id}, rating {glicko_dict[p2_id].rating}, RD {glicko_dict[p2_id].rd}, vol {glicko_dict[p2_id].vol}')
-                print(f'rating list: {p1_elo}')
-
-
-
-        print(f'Period start date: {rate_period_date}')
-        print('------------------------')
-        rate_period_date = future_period_date
-
-
-    df['glicko_1'] = 0
-    counter = 0
-    for i in enumerate(df.copy().index):
-        df.loc[counter,'glicko_1'] = glicko_dict[i[1]].rating
-        df.loc[counter,'id'] = i[1]
-        counter += 1
-    df = df.drop(columns=[0])
-    df = df.join(match_df.copy()[['p1_id','p1_name']].set_index('p1_id',drop=True), on='id', how='left').drop_duplicates(subset='id',keep='first').reset_index()
-    df = df.sort_values(by='glicko_1',ascending=False)
-    df = df.set_index(0,drop=True)
-    df['index'] = np.arange(len(df))
-    df = df.set_index('index',drop=True)
-    df = df.drop(['rating','deviation','volatility','opponent_elo','opponent_deviation','opponent_volatility','outcome','active'],axis=1)
 
 
 def gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff):
@@ -823,6 +668,7 @@ def gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility
     output_df = pd.DataFrame.from_dict(match_dict, orient='index')
 
     return output_df
+
 
 def duplicate_df(match_df):
     """this function is not currently in use. originally, it duplicated p1/p2 features to make the data symmetrical.
@@ -1125,6 +971,7 @@ def time_on_court(match_df, games_base, year_base, time_periods, rolling_windows
     df['minutes'] = df.groupby(['total_games_rounded', 'decade'])['minutes'].transform(lambda x: x.fillna(x.expanding(1).median()))
     df['minutes'] = df.groupby('total_games_rounded')['minutes'].transform(lambda x: x.fillna(x.expanding(1).median()))
     df['minutes'] = df.groupby(['total_games_rounded', 'decade'])['minutes'].transform(lambda x: x.fillna(x.median()))
+    df['minutes'] = df.groupby(['total_games_rounded'])['minutes'].transform(lambda x: x.fillna(x.median()))
     print(f'\nRemoving {df["minutes"].isna().sum()} matches with no match time.')
     df = df.dropna(subset='minutes')
     print(f'Complete...\n')
@@ -1169,6 +1016,7 @@ def to_parquet(match_df):
     """saves the final output to a parquet file"""
     match_df.to_parquet(f'{wd}/Data/output_df.parquet.gzip', compression='gzip')
     print(f'Parquet saved to {wd}/Data/output_df.parquet')
+
 
 def to_csv(match_df):
     """saves the final output to a csv"""
@@ -1218,6 +1066,7 @@ def momentum(match_df):
 
     return output_df
 
+
 def surfaces(match_df):
     print(f'\nSetting dummy variables for surface type...')
     df = match_df.copy()
@@ -1231,6 +1080,7 @@ def surfaces(match_df):
     df = df.join(dummies)
 
     return df
+
 
 def surface_wins(match_df):
     print(f'\nCalculating player surface performance')
@@ -1284,6 +1134,7 @@ def surface_wins(match_df):
     print(df[(df.p1_id == 104925) | (df.p2_id == 104925)].head(100))
 
     return df
+
 
 def player_age(match_df):
     print(f'Fixing player ages')
@@ -1364,15 +1215,240 @@ def get_location(match_df, tourney_list, tourney_link):
     df['year'] = df['tourney_date'].dt.year
     tournaments = df.tourney_name.unique()
     tourney_source = pd.read_csv(tourney_link, header=0)
-    tourney_source = tourney_source.drop_duplicates(subset='tourney_name')
-    print(geotext.GeoText('London').cities)
+    # print(tourney_source[tourney_source.tourney_id.isna()])
+    tourney_source = tourney_source.dropna(subset='tourney_id')
+    print(tourney_source.shape[0])
+    tourney_source['tourney_id'] = tourney_source['tourney_id'].astype(int)
+    tourney_source['tourney_id'] = tourney_source['tourney_id'].astype(str)
+
+    tourney_source = tourney_source.drop_duplicates(subset='tourney_id')
+    tourney_source = tourney_source.dropna(subset='tourney_location')
+    print(tourney_source.shape[0])
+    df['tourney_id_yearless'] = df['tourney_id'].str.replace('2023-', '')
+
+    tourney_source = tourney_source.loc[:, ['tourney_name', 'tourney_id', 'tourney_year', 'tourney_location', 'tourney_year_id']]
+
+    # print(list(GeoText('London').country_mentions.keys())[0])
+    test = tourney_source['tourney_location'].str.split(pat=', ', expand=True)
+    print(test.iloc[:, 1])
+    tourney_source['country'] = test.iloc[:, 1]
+    tourney_source[tourney_source['country'] == None]['country'] = tourney_source[tourney_source['country'] == None]['tourney_location'].progress_apply(lambda x: geograpy.get_geoPlace_context(text=x).countries)
+    tourney_source = tourney_source.reset_index(drop=True)
+    # print(type(tourney_source.country[0][0]))
+    print(tourney_source.country[0])
+    print(tourney_source.country[0][0])
+    print(len(tourney_source.country.keys()))
+    # tourney_source = tourney_source[tourney_source['country'].progress_apply(lambda x: len(x)) > 0]
+    # tourney_source['country'] = tourney_source['country'].progress_apply(lambda x: x[0])
+    # tourney_source = tourney_source[(len(tourney_source.country[0]) > 0)]
+    # print((tourney_source.loc[0, ['country']]))
+    # # print(len(tourney_source.loc[1, ['country']]))
+    #
+    # for i in range(tourney_source.shape[0]):
+    #     if len(tourney_source.loc[i, ['country']]) > 0:
+    #         tourney_source.loc[i, ['country']] = tourney_source.loc[i, ['country']][0]
+    #     else:
+    #         tourney_source.loc[i, ['country']] = ''
+
+    # print(geotext.GeoText('London').cities)
     # print(geoSearch('madrid'))
     # tourney_source['country'] = tourney_source['tourney_location'].progress_apply(lambda x: geoSearch(x).countries[0])
-    print(tourney_source.head(100))
+    print(tourney_source.head(20))
+    print(df.tail(30))
 
-    # print(tournaments)
-    # print(df.head(10))
-    # print(tourney_list)
+    return df
+
+
+def gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff):
+    print(f'\nCalculating Glicko-2 surface ratings...')
+
+    # This code section sets up the output dataframe to be populated later.
+    output_df = match_df.copy(deep=True)
+
+    surfaces = output_df['surface'].unique()
+    print(surfaces)
+    # rps = dict([Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period])
+
+    output_df['p1_glicko_surface_rating'] = 0
+    output_df['p2_glicko_surface_rating'] = 0
+    output_df['p1_glicko_surface_deviation'] = 0
+    output_df['p2_glicko_surface_deviation'] = 0
+    output_df['p1_glicko_surface_volatility'] = 0
+    output_df['p2_glicko_surface_volatility'] = 0
+
+    output_dicts = []
+
+    for surface in surfaces:
+        # This section creates a list of unique player ID's from all matches played in match_df
+        # Time-dependent Glicko ratings will be stored in this dataframe (later dictionary)
+        df = match_df[match_df['surface'] == surface].copy()
+        surface_df = match_df[match_df['surface'] == surface].copy()
+        s1 = pd.Series(df.loc[:, 'p1_id'])
+        s2 = pd.Series(df.loc[:, 'p2_id'])
+        df = pd.concat([s1, s2], ignore_index=True).drop_duplicates(keep='first').reset_index()
+        df = df.set_index(0, drop=False)
+        df = df.drop(['index'], axis=1)
+        print(f'Glicko ranking database created...')
+
+        # Setting each row value to an empty list. These lists will be populated with each player's opponents' Glicko stats
+        # They will then be wiped and re-populated in each defined rating period
+        df['opponent_elo'] = np.empty((len(df), 0)).tolist()
+        df['opponent_deviation'] = np.empty((len(df), 0)).tolist()
+        df['outcome'] = np.empty((len(df), 0)).tolist()
+        df['active'] = 0
+
+        # Pulls the start date for the data from the match dataframe
+        start_date = surface_df['tourney_date'].min()
+        # start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
+        # In Glicko-2, the rating period is the time period in which all games that occur in that period are considered
+        # to have occurred simultaneously (to determine rating standard deviation/volatility)
+        if surface == 'Hard':
+            rp = int(Hard_rating_period)
+        elif surface == 'Clay':
+            rp = int(Clay_rating_period)
+        elif surface == 'Grass':
+            rp = int(Grass_rating_period)
+        elif surface == 'Carpet':
+            rp = int(Carpet_rating_period)
+
+        # Converting all dataframes to dictionaries (for computational speed)
+        glicko_dict = df.copy().to_dict(orient='index')
+        ratings_dict = df.copy().to_dict(orient='index')
+        match_dict = output_df[output_df['surface'] == surface].to_dict(orient='index')
+        print(f'Dictionaries created...\n')
+
+        # Creates a unique Glicko player for each unique player ID in the DataFrame
+        print(f'Creating Glicko players...\nInitial Rating: {initial_rating}\nInitial Deviation: {initial_deviation}\nVolatility: {initial_volatility}')
+        for key in enumerate(df.copy().index):
+            glicko_dict[key[1]] = Player(initial_rating, initial_deviation, initial_volatility)
+        print(f'\nGlicko players created...')
+        rate_period_date = start_date
+        print(f'\nSolving for Glicko ratings, period = {rp} days')
+        print(f'Start date: {rate_period_date}\n')
+
+        # To compute expected runtime
+        start_time = time.time()
+        num_loops = ((surface_df['tourney_date'].max() - start_date)/rp).days + 1
+        # num_loops = ((datetime.datetime.strptime(match_df.copy()['tourney_date'].max(), '%Y-%m-%d')-start_date)/rp).days + 1
+        loops_complete = 0
+
+
+        """ This while loop loops through the match DataFrame multiple times (depending on the length of the rating period
+        and the time period covered in the DataFrame. For example, if the DataFrame covers 360 days of matches and the 
+        rating period is set to 90 days, then this while loop will occur 4 times. While this procedure is not necessary
+        to compute Glicko-1 scores or ELO, it is necessary to calculate Glicko-2"""
+        while rate_period_date < surface_df['tourney_date'].max():
+        # while rate_period_date < datetime.datetime.strptime(match_df.copy()['tourney_date'].max(), '%Y-%m-%d'):
+            # Sets an end date for this period (current day + rating period). Ex: (Jan 1 + 40 days) = ~Feb 10
+            future_period_date = rate_period_date + datetime.timedelta(days=rp)
+            # Filters the match DataFrame for all matches that occur in this time period
+            filtered_dict = {k: v for k, v in match_dict.items() if (
+                    rate_period_date <= v['tourney_date'] < future_period_date)}
+
+            # Loops through this newly created filtered match dictionary
+            for k, v in filtered_dict.items():
+                # Setting p1/p2 values for later manipulation
+                p1_id = v['p1_id']
+                p1_elo = glicko_dict[p1_id].rating
+                p1_deviation = glicko_dict[p1_id].rd
+
+                p2_id = v['p2_id']
+                p2_elo = glicko_dict[p2_id].rating
+                p2_deviation = glicko_dict[p2_id].rd
+
+                """Appends each match opponent's statistics onto their opponent's lists. For example, if P1 plays P2,
+                (rating 1400, RD 200, vol .06) and P3 (rating 1200, RD 100, vol .05), then P1's lists will read
+                 ['opponent_elo'] = [1400,1200], ['opponent_rd'] = [200,100] after 2 iterations of the for loop
+                 (assuming these matches occurred directly after each other in the dictionary"""
+                ratings_dict[p1_id]['opponent_elo'].append(p2_elo)
+                ratings_dict[p1_id]['opponent_deviation'].append(p2_deviation)
+                ratings_dict[p2_id]['opponent_elo'].append(p1_elo)
+                ratings_dict[p2_id]['opponent_deviation'].append(p1_deviation)
+
+                # Appends the outcome to the correct player depending on who won the match
+                ratings_dict[p1_id]['outcome'].append(v['p1_score'])
+                ratings_dict[p2_id]['outcome'].append(v['p2_score'])
+
+                # For computational efficiency, players are only updated if they are active (set here if they play a match)
+                ratings_dict[p1_id]['active'] = 1
+                ratings_dict[p2_id]['active'] = 1
+
+                # Adds each player's elo, RD, and vol (from the end of the previous period) to each match in the
+                # main match dictionary
+                match_dict[k]['p1_glicko_surface_rating'] = p1_elo
+                match_dict[k]['p2_glicko_surface_rating'] = p2_elo
+                match_dict[k]['p1_glicko_surface_deviation'] = p1_deviation
+                match_dict[k]['p2_glicko_surface_deviation'] = p2_deviation
+                match_dict[k]['p1_glicko_surface_volatility'] = glicko_dict[p1_id].vol
+                match_dict[k]['p2_glicko_surface_volatility'] = glicko_dict[p2_id].vol
+
+            # Makes sure we only update players who are active (for computational efficiency)
+            active_players_dict = {k: v for k, v in ratings_dict.items() if (v['active'] == 1)}
+
+            # Loops through all active players to update their Glicko ratings
+            for k, v in active_players_dict.items():
+                # If they player has played 1 or more matches in this period, then update their Glicko stats
+                if len(v['outcome']) > 0:
+                    glicko_dict[k].update_player(active_players_dict[k]['opponent_elo'], active_players_dict[k]['opponent_deviation'], active_players_dict[k]["outcome"])
+                # If the player has not played a match in this period, then call did_not_compete()
+                else:
+                    glicko_dict[k].did_not_compete()
+
+                # Reset the appended lists for opponent data (to be re-populated with the next period's data)
+                ratings_dict[k]['opponent_elo'] = []
+                ratings_dict[k]['opponent_deviation'] = []
+                ratings_dict[k]['outcome'] = []
+
+            # Moves the period forward by the rating period
+            rate_period_date = future_period_date
+            loops_complete += 1
+            if loops_complete % 10 == 0:
+                print(f'Estimated time remaining: {((time.time()-start_time)*(num_loops-loops_complete)/(loops_complete)):.2f} seconds')
+        output_dicts.append(match_dict)
+
+        #------------------------------------------------------------------
+        # This section is purely for my own visualization, producing a DataFrame with sorted Glicko rankings at the
+        # end of the data
+        if show_rankings > 0:
+            df['glicko_rating'] = 0
+            counter = 0
+
+            # Pulls the final Glicko ratings for each unique player, stores them in DF
+            for i in enumerate(df.copy().index):
+                df.loc[counter, 'glicko_rating'] = glicko_dict[i[1]].rating
+                df.loc[counter, 'glicko_RD'] = glicko_dict[i[1]].rd
+                df.loc[counter, 'id'] = i[1]
+                counter += 1
+
+            # Drops the index, joins with match_df to produce player names
+            # This .join is not perfect, but since it is only for internal purposes, it's good enough
+            df = df.drop(columns=[0])
+            df = df.join(match_df.copy()[['p1_id', 'p1_name']].set_index('p1_id', drop=True), on='id',
+                         how='left').drop_duplicates(subset='id', keep='first').reset_index()
+            df = df.sort_values(by='glicko_rating', ascending=False)
+            df = df.set_index(0, drop=True)
+            df['index'] = np.arange(len(df))
+            df = df.set_index('index', drop=True)
+            # Drop unnecessary columns
+            df = df.drop(
+                ['opponent_elo', 'opponent_deviation', 'outcome',
+                 'active'], axis=1)
+            # Gets rid of inactive players (inactive players will have very large Glicko RD's (usually larger than 80))
+            # This cutoff can be adjusted in .main()
+            df = df[df['glicko_RD'] < rd_cutoff].reset_index(drop=True)
+
+            # Prints the dataframe
+            print(f'\n{surface} Glicko rankings as of {rate_period_date}')
+            print(df.head(show_rankings))
+
+    # Reformats the dictionary back into a DataFrame for further analysis. Returns said DataFrame
+    output_df = pd.DataFrame.from_dict(output_dicts[0], orient='index')
+    for i in range(len(output_dicts)-1):
+        temp_df = pd.DataFrame.from_dict(output_dicts[i+1], orient='index')
+        output_df = pd.concat([output_df, temp_df])
+
+
+    return output_df
 
 
 def main():
@@ -1398,7 +1474,6 @@ def main():
 
     # ACTIVATE THE BELOW FUNCTION TO RESET CITIES
     # tourney_list = pull_cities(no_year_tourney_list)
-
     # get location names
     # tourney_source = 'https://datahub.io/sports-data/atp-world-tour-tennis-data/r/tournaments_1877-2017_unindexed.csv'
     # match_df = get_location(match_df, tourney_list, tourney_source)
@@ -1414,7 +1489,7 @@ def main():
     # match_df = match_df[match_df['tourney_level'] == 'ATP']
 
     # pull rankings and append to dataframe
-    match_df = set_h2h(match_df, rankings_df)
+    # match_df = set_h2h(match_df, rankings_df)
 
     # calculates player scores to input into Glicko-2 ranking system
     winner_weight = .6
@@ -1430,23 +1505,24 @@ def main():
     rating_period = 40
     show_rankings = 100
     rd_cutoff = 80
-    match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
+    # match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
+
 
     # adds date features (year, sin(day), cos(day)) to the dataframe
     match_df = date_features(match_df)
 
     # consolidates all tournament levels into 'ATP', 'C', and 'S'
-    match_df = tourney_level(match_df)
+    # match_df = tourney_level(match_df)
 
     # calculates a rolling sum of p1/p2 wins and losses at all levels in the following time periods
     time_periods = ['l6m', 'l1y', 'career']
     rolling_windows = ['182d', '365d', '30000d']
-    match_df = player_wins(match_df, time_periods, rolling_windows)
+    # match_df = player_wins(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of p1/p2 wins and losses at their current tournament in the following time periods
     time_periods = ['l1y', 'l3y', 'career']
     rolling_windows = ['365d', '1095d', '30000d']
-    match_df = tourney_history(match_df, time_periods, rolling_windows)
+    # match_df = tourney_history(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of time on court for all players in the following time periods.
     # fills missing match time data with averages; rounds match_games to games_base and rounds year to year_base
@@ -1457,29 +1533,41 @@ def main():
     match_df = time_on_court(match_df, games_base, year_base, time_periods, rolling_windows)
 
     # adds momentum in the form of win and loss streak
-    match_df = momentum(match_df)
+    # match_df = momentum(match_df)
 
     # adds one-hot variables for surface type
-    match_df = surfaces(match_df)
+    # match_df = surfaces(match_df)
+
+    # using the following input parameters, calculates the Glicko-2 ratings of players in dataset on match surface
+    initial_rating = 2300
+    initial_deviation = 350
+    initial_volatility = .08
+    Hard_rating_period = 55
+    Grass_rating_period = 100
+    Clay_rating_period = 80
+    Carpet_rating_period = 360
+    show_rankings = 100
+    rd_cutoff = 100
+    # match_df = gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff)
 
     # calculates player strength on surface (wins and losses)
-    match_df = surface_wins(match_df)
+    # match_df = surface_wins(match_df)
 
     # calculates player ages
-    match_df = player_age(match_df)
+    # match_df = player_age(match_df)
 
     # calculates the length of time a player has been inactive
-    match_df = player_inactive_period(match_df)
+    # match_df = player_inactive_period(match_df)
 
     # splits the dataframe, for half of the dataset, makes p1 the winner, and for the other half, makes p2 the winner
-    match_df = split_df_2(match_df)
+    # match_df = split_df_2(match_df)
 
     # NO LONGER USED
     # duplicates the dataframe to make the neural network symmetrical
     # match_df = duplicate_df(match_df)
 
     # saves the dataframe as a parquet, outputs necessary features to the neural network
-    to_parquet(match_df)
+    # to_parquet(match_df)
 
     print(match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)].head(100))
 
@@ -1487,18 +1575,3 @@ def main():
     winsound.Beep(500, 100)
 
 main()
-
-# __________
-# to test time on court
-# moya_df = match_df[(match_df['p1_name'] == 'Carlos Moya') | (match_df['p2_name'] == 'Carlos Moya')]
-# print(moya_df.head(50))
-# # print(moya_df[moya_df['tourney_code_no_year'] == '580'].head(50))
-# print(moya_df.loc[:, ['p1_name', 'p2_name', 'minutes', 'p1_time_oncourt_last_match', 'p1_time_oncourt_last_3_matches', 'p1_time_oncourt_last_2_weeks', 'p2_time_oncourt_last_match', 'p2_time_oncourt_last_3_matches', 'p2_time_oncourt_last_2_weeks']].head(900))
-
-# match_df_s = match_df[['S','p1_id','p2_id','p1_w_tourney_career','p1_l_tourney_career','p2_w_tourney_career','p2_tourney_S_career','tourney_name']]
-# match_df_s = match_df_s[match_df_s['S'] == 1]
-# match_df = match_df[['ATP','p1_id','p2_id','p1_w_tourney_career','p1_l_tourney_career','p2_w_tourney_career','p2_l_tourney_career','tourney_name']]
-# # match_df = match_df[match_df['ATP'] == 1]
-#
-#
-# print(match_df[(match_df['p1_id'] == 104925) | (match_df['p2_id'] == 104925)].loc[:,['p1_name','p2_name','tourney_level_consolidated','p1_w_S_career','p1_l_S_career','p1_w_C_career','p1_l_C_career','p1_w_ATP_career','p1_l_ATP_career','p2_w_S_career','p2_l_S_career','p2_w_C_career','p2_l_C_career','p2_w_ATP_career','p2_l_ATP_career']])
