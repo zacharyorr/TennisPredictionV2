@@ -19,23 +19,47 @@ pd.options.display.max_columns = None
 pd.options.display.width = None
 pd.options.display.max_rows = 10000
 
+class Net3(nn.Module):
+  def __init__(self,input_shape):
+    super(Net3,self).__init__()
+    self.fc1 = nn.Linear(input_shape,128)
+    self.fc2 = nn.Linear(128,256)
+    self.fc3 = nn.Linear(256,512)
+    self.fc4 = nn.Linear(512,256)
+    self.fc5 = nn.Linear(256,64)
+    self.fc6 = nn.Linear(64,16)
+    self.fc7 = nn.Linear(16,4)
+    self.fc8 = nn.Linear(4, 1)
+
+  def forward(self,x):
+    x = torch.relu(self.fc1(x))
+    x = torch.relu(self.fc2(x))
+    x = torch.relu(self.fc3(x))
+    x = torch.relu(self.fc4(x))
+    x = torch.relu(self.fc5(x))
+    x = torch.relu(self.fc6(x))
+    x = torch.relu(self.fc7(x))
+    x = torch.sigmoid(self.fc8(x))
+    return x
+
 def import_odds(start_year, end_year, start_date):
     dfs = []
     if (end_year - start_year) > 0:
         for i in range(start_year, end_year):
-            odds = pd.read_excel(f'{wd}/Data/odds/{i}.xlsx', parse_dates=['Date'])
+            odds = pd.read_excel(f'http://www.tennis-data.co.uk/{i}/{i}.xlsx', parse_dates=['Date'])
             dfs.append(odds)
         df = pd.concat(dfs, ignore_index=True)
         df = df[df.Date > start_date]
         return df
     else:
-        odds = pd.read_excel(f'{wd}/Data/odds/{start_year}.xlsx', parse_dates=['Date'])
+        print(start_year)
+        odds = pd.read_excel(f'http://www.tennis-data.co.uk/{start_year}/{start_year}.xlsx', parse_dates=['Date'])
         df = pd.DataFrame(odds)
         return df
 
 def clean_odds(df):
     start_count = df.shape[0]
-    df = df[(df.Comment == 'Completed') & (df['Best of'] == 3)]
+    df = df[(df.Comment == 'Completed')]
     end_count = df.shape[0]
     print(df.shape[0])
 
@@ -47,7 +71,10 @@ def import_players():
     return players
 
 def import_matches(start_year):
-    match_df = pd.read_csv(f'{wd}/Data/output_df.csv', parse_dates = ['tourney_date','dt_index'])
+    match_df = pd.read_parquet(f'{wd}/Data/output_df.parquet.gzip')
+    match_df = match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)]
+
+    # match_df['tourney_date'] = match_df['tourney_date']
     # print(f'Match_df shape')
     # print(match_df.shape[0])
     match_df = match_df[match_df.tourney_date >= pd.to_datetime(start_year, format='%Y')]
@@ -152,6 +179,7 @@ def load_model(name, model_type):
 
 def inference(match_df, model):
     df = match_df.copy()
+    print(df.head(20))
     X = df.drop(['p1_seed', 'p1_ht', 'p1_age', 'p2_seed', 'p2_ht', 'p2_age', 'p1_rank',
        'p1_rank_points', 'p2_rank', 'p2_rank_points', 'p1_home',
        'p2_home', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games','index','level_0','tourney_id','tourney_name','surface',
@@ -184,12 +212,12 @@ def inference(match_df, model):
                           'p2_entry','winner','winner_name','loser_name','winner_id','loser_id','PSW','PSL','ps_winner_odds','ps_loser_odds'],axis=1)
 
     sc = StandardScaler()
-    print(X['p1_time_oncourt_last_match'].head(10))
-    var = 'time_oncourt_last_match'
-    X['p1_time_oncourt_last_match']= shuffle(X['p1_time_oncourt_last_match'], random_state=20)
-    for player in ['p1','p2']:
-        X.loc[:,[f'{player}_{var}']] = shuffle(X.loc[:,[f'{player}_{var}']],random_state=420)
-    print(X['p1_time_oncourt_last_match'].head(10))
+    # print(X['p1_time_oncourt_last_match'].head(10))
+    # var = 'time_oncourt_last_match'
+    # X['p1_time_oncourt_last_match']= shuffle(X['p1_time_oncourt_last_match'], random_state=20)
+    # for player in ['p1','p2']:
+    #     X.loc[:,[f'{player}_{var}']] = shuffle(X.loc[:,[f'{player}_{var}']],random_state=420)
+    # print(X['p1_time_oncourt_last_match'].head(10))
     X = sc.fit_transform(X)
     with torch.no_grad():
         y_pred = model(torch.tensor(X, dtype=torch.float32))
@@ -313,8 +341,8 @@ def main():
 
     match_df = match_index(match_df, odds_df, player_df)
 
-    model_name = 'model2'
-    model_type = Net2(input_shape=73)
+    model_name = 'model_2_26_0.09'
+    model_type = Net3(input_shape=105)
     model = load_model(model_name, model_type)
 
     match_df = inference(match_df, model)

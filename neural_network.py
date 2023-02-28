@@ -100,7 +100,7 @@ hidden_size = 256
 num_classes = 2
 num_epochs = 100
 batch_size = 64
-learning_rate = .001
+learning_rate = .005
 test_year = '2022-01-01'
 
 # import data
@@ -199,6 +199,11 @@ print(X.columns)
 X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=train_size,shuffle=False, random_state=420)
 baseline_train, baseline_test = train_test_split(baseline_x, train_size=train_size, shuffle=False, random_state=420)
 
+print(type(X_train))
+print(X_train['year'].max())
+print(X_train.tail(200))
+print(X_test['year'].max())
+
 sc = StandardScaler()
 X_train = sc.fit_transform(X_train)
 X_test = sc.transform(X_test)
@@ -215,9 +220,7 @@ trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=False)
 # ------------------------------------------
 
 
-
-
-model = Net2(input_shape=X.shape[1])
+model = Net3(input_shape=X.shape[1])
 optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=.1)
 loss_fn = nn.BCELoss()
@@ -297,11 +300,482 @@ ax2.tick_params(axis='y', labelcolor=color)
 
 fig.tight_layout()
 # plt.show()
-fig.savefig(f'{wd}/model_2_26_{losses[-1]:.2f}.png')
+fig.savefig(f'{wd}/models/model_2_26_batch64lr005_{losses[-1]:.2f}.png')
 plt.clf()
 
 
-torch.save(model.state_dict(), f'{wd}/model_2_26_{losses[-1]:.2f}.pth')
+torch.save(model.state_dict(), f'{wd}/models/model_2_26_batch64lr005_{losses[-1]:.2f}.pth')
+
+# ------------------------------------------
+
+
+num_epochs = 100
+batch_size = 128
+learning_rate = .005
+
+
+
+model = Net3(input_shape=X.shape[1])
+optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=.1)
+loss_fn = nn.BCELoss()
+
+losses = []
+train_accur = []
+test_accur = []
+
+start_time = time.time()
+
+baseline_accuracy = (baseline_test['baseline_prediction'] == y_test).mean()
+print(f'Baseline accuracy: {baseline_accuracy}')
+
+for i in range(num_epochs):
+    train_correct = 0
+    train_size = 0
+
+    for j, (X_train, y_train) in enumerate(trainloader):
+        # calculate output
+        output = model(X_train)
+
+        # calculate loss
+        loss = loss_fn(output, y_train.reshape(-1, 1))
+
+        # backprop
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        model.eval()
+        with torch.no_grad():
+            predicted = model(torch.tensor(X_train, dtype=torch.float32))
+            train_correct += (predicted.reshape(-1).detach().numpy().round() == y_train.detach().numpy()).sum()
+            train_size += len(y_train.detach().numpy())
+        model.train()
+
+    # accuracy
+    train_acc = train_correct/train_size
+    model.eval()
+    with torch.no_grad():
+        predicted = model(torch.tensor(X_test, dtype=torch.float32))
+        test_acc = (predicted.reshape(-1).detach().numpy().round() == y_test).mean()
+
+    model.train()
+    scheduler.step()
+
+
+    # print(predicted)
+    # if i % 5 == 0:
+    losses.append(loss)
+    train_accur.append(train_acc)
+    test_accur.append(test_acc)
+    print("epoch {}\tloss : {}\t train accuracy : {}\t test accuracy : {}".format((i+1), loss, train_acc, test_acc))
+    print(f'Time elapsed: {time.time()-start_time}')
+    print(f'Estimated time remaining: {((time.time() - start_time) * (num_epochs - i+1) / (i+1)):.2f} seconds')
+
+print(f'Losses: {losses}')
+
+fig, ax1 = plt.subplots()
+
+color = 'tab:red'
+ax1.set_xlabel('Epoch')
+ax1.set_ylabel('Training Loss', color=color)
+ax1.plot([tensor.item() for tensor in losses], color=color)
+ax1.tick_params(axis='y', labelcolor=color)
+
+ax2 = ax1.twinx()
+
+color = 'tab:blue'
+ax2.set_ylabel('Train Accuracy', color=color)
+ax2.plot(train_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+color = 'tab:green'
+ax2.set_ylabel('Accuracy', color=color)
+ax2.plot(test_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+fig.tight_layout()
+# plt.show()
+fig.savefig(f'{wd}/models/model_2_26_batch128lr005_{losses[-1]:.2f}.png')
+plt.clf()
+
+
+torch.save(model.state_dict(), f'{wd}/models/model_2_26_batch128lr005_{losses[-1]:.2f}.pth')# ------------------------------------------
+
+# ------------------------------------------
+
+
+num_epochs = 100
+batch_size = 64
+learning_rate = .0025
+
+model = Net3(input_shape=X.shape[1])
+optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=.1)
+loss_fn = nn.BCELoss()
+
+losses = []
+train_accur = []
+test_accur = []
+
+start_time = time.time()
+
+baseline_accuracy = (baseline_test['baseline_prediction'] == y_test).mean()
+print(f'Baseline accuracy: {baseline_accuracy}')
+
+for i in range(num_epochs):
+    train_correct = 0
+    train_size = 0
+
+    for j, (X_train, y_train) in enumerate(trainloader):
+        # calculate output
+        output = model(X_train)
+
+        # calculate loss
+        loss = loss_fn(output, y_train.reshape(-1, 1))
+
+        # backprop
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        model.eval()
+        with torch.no_grad():
+            predicted = model(torch.tensor(X_train, dtype=torch.float32))
+            train_correct += (predicted.reshape(-1).detach().numpy().round() == y_train.detach().numpy()).sum()
+            train_size += len(y_train.detach().numpy())
+        model.train()
+
+    # accuracy
+    train_acc = train_correct/train_size
+    model.eval()
+    with torch.no_grad():
+        predicted = model(torch.tensor(X_test, dtype=torch.float32))
+        test_acc = (predicted.reshape(-1).detach().numpy().round() == y_test).mean()
+
+    model.train()
+    scheduler.step()
+
+
+    # print(predicted)
+    # if i % 5 == 0:
+    losses.append(loss)
+    train_accur.append(train_acc)
+    test_accur.append(test_acc)
+    print("epoch {}\tloss : {}\t train accuracy : {}\t test accuracy : {}".format((i+1), loss, train_acc, test_acc))
+    print(f'Time elapsed: {time.time()-start_time}')
+    print(f'Estimated time remaining: {((time.time() - start_time) * (num_epochs - i+1) / (i+1)):.2f} seconds')
+
+print(f'Losses: {losses}')
+
+fig, ax1 = plt.subplots()
+
+color = 'tab:red'
+ax1.set_xlabel('Epoch')
+ax1.set_ylabel('Training Loss', color=color)
+ax1.plot([tensor.item() for tensor in losses], color=color)
+ax1.tick_params(axis='y', labelcolor=color)
+
+ax2 = ax1.twinx()
+
+color = 'tab:blue'
+ax2.set_ylabel('Train Accuracy', color=color)
+ax2.plot(train_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+color = 'tab:green'
+ax2.set_ylabel('Accuracy', color=color)
+ax2.plot(test_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+fig.tight_layout()
+# plt.show()
+fig.savefig(f'{wd}/models/model_2_26_batch64lr0025_{losses[-1]:.2f}.png')
+plt.clf()
+
+
+torch.save(model.state_dict(), f'{wd}/models/model_2_26_batch64lr0025_{losses[-1]:.2f}.pth')
+
+# ------------------------------------------
+
+
+num_epochs = 100
+batch_size = 128
+learning_rate = .0025
+
+
+
+model = Net3(input_shape=X.shape[1])
+optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=.1)
+loss_fn = nn.BCELoss()
+
+losses = []
+train_accur = []
+test_accur = []
+
+start_time = time.time()
+
+baseline_accuracy = (baseline_test['baseline_prediction'] == y_test).mean()
+print(f'Baseline accuracy: {baseline_accuracy}')
+
+for i in range(num_epochs):
+    train_correct = 0
+    train_size = 0
+
+    for j, (X_train, y_train) in enumerate(trainloader):
+        # calculate output
+        output = model(X_train)
+
+        # calculate loss
+        loss = loss_fn(output, y_train.reshape(-1, 1))
+
+        # backprop
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        model.eval()
+        with torch.no_grad():
+            predicted = model(torch.tensor(X_train, dtype=torch.float32))
+            train_correct += (predicted.reshape(-1).detach().numpy().round() == y_train.detach().numpy()).sum()
+            train_size += len(y_train.detach().numpy())
+        model.train()
+
+    # accuracy
+    train_acc = train_correct/train_size
+    model.eval()
+    with torch.no_grad():
+        predicted = model(torch.tensor(X_test, dtype=torch.float32))
+        test_acc = (predicted.reshape(-1).detach().numpy().round() == y_test).mean()
+
+    model.train()
+    scheduler.step()
+
+
+    # print(predicted)
+    # if i % 5 == 0:
+    losses.append(loss)
+    train_accur.append(train_acc)
+    test_accur.append(test_acc)
+    print("epoch {}\tloss : {}\t train accuracy : {}\t test accuracy : {}".format((i+1), loss, train_acc, test_acc))
+    print(f'Time elapsed: {time.time()-start_time}')
+    print(f'Estimated time remaining: {((time.time() - start_time) * (num_epochs - i+1) / (i+1)):.2f} seconds')
+
+print(f'Losses: {losses}')
+
+fig, ax1 = plt.subplots()
+
+color = 'tab:red'
+ax1.set_xlabel('Epoch')
+ax1.set_ylabel('Training Loss', color=color)
+ax1.plot([tensor.item() for tensor in losses], color=color)
+ax1.tick_params(axis='y', labelcolor=color)
+
+ax2 = ax1.twinx()
+
+color = 'tab:blue'
+ax2.set_ylabel('Train Accuracy', color=color)
+ax2.plot(train_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+color = 'tab:green'
+ax2.set_ylabel('Accuracy', color=color)
+ax2.plot(test_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+fig.tight_layout()
+# plt.show()
+fig.savefig(f'{wd}/models/model_2_26_batch128lr0025_{losses[-1]:.2f}.png')
+plt.clf()
+
+
+torch.save(model.state_dict(), f'{wd}/models/model_2_26_batch128lr0025_{losses[-1]:.2f}.pth')
+
+# ------------------------------------------
+
+
+num_epochs = 100
+batch_size = 64
+learning_rate = .01
+
+model = Net3(input_shape=X.shape[1])
+optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=.1)
+loss_fn = nn.BCELoss()
+
+losses = []
+train_accur = []
+test_accur = []
+
+start_time = time.time()
+
+baseline_accuracy = (baseline_test['baseline_prediction'] == y_test).mean()
+print(f'Baseline accuracy: {baseline_accuracy}')
+
+for i in range(num_epochs):
+    train_correct = 0
+    train_size = 0
+
+    for j, (X_train, y_train) in enumerate(trainloader):
+        # calculate output
+        output = model(X_train)
+
+        # calculate loss
+        loss = loss_fn(output, y_train.reshape(-1, 1))
+
+        # backprop
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        model.eval()
+        with torch.no_grad():
+            predicted = model(torch.tensor(X_train, dtype=torch.float32))
+            train_correct += (predicted.reshape(-1).detach().numpy().round() == y_train.detach().numpy()).sum()
+            train_size += len(y_train.detach().numpy())
+        model.train()
+
+    # accuracy
+    train_acc = train_correct/train_size
+    model.eval()
+    with torch.no_grad():
+        predicted = model(torch.tensor(X_test, dtype=torch.float32))
+        test_acc = (predicted.reshape(-1).detach().numpy().round() == y_test).mean()
+
+    model.train()
+    scheduler.step()
+
+
+    # print(predicted)
+    # if i % 5 == 0:
+    losses.append(loss)
+    train_accur.append(train_acc)
+    test_accur.append(test_acc)
+    print("epoch {}\tloss : {}\t train accuracy : {}\t test accuracy : {}".format((i+1), loss, train_acc, test_acc))
+    print(f'Time elapsed: {time.time()-start_time}')
+    print(f'Estimated time remaining: {((time.time() - start_time) * (num_epochs - i+1) / (i+1)):.2f} seconds')
+
+print(f'Losses: {losses}')
+
+fig, ax1 = plt.subplots()
+
+color = 'tab:red'
+ax1.set_xlabel('Epoch')
+ax1.set_ylabel('Training Loss', color=color)
+ax1.plot([tensor.item() for tensor in losses], color=color)
+ax1.tick_params(axis='y', labelcolor=color)
+
+ax2 = ax1.twinx()
+
+color = 'tab:blue'
+ax2.set_ylabel('Train Accuracy', color=color)
+ax2.plot(train_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+color = 'tab:green'
+ax2.set_ylabel('Accuracy', color=color)
+ax2.plot(test_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+fig.tight_layout()
+# plt.show()
+fig.savefig(f'{wd}/models/model_2_26_batch64lr01_{losses[-1]:.2f}.png')
+plt.clf()
+
+
+torch.save(model.state_dict(), f'{wd}/models/model_2_26_batch64lr01_{losses[-1]:.2f}.pth')
+
+# ------------------------------------------
+
+
+num_epochs = 100
+batch_size = 128
+learning_rate = .01
+
+
+
+model = Net3(input_shape=X.shape[1])
+optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=.1)
+loss_fn = nn.BCELoss()
+
+losses = []
+train_accur = []
+test_accur = []
+
+start_time = time.time()
+
+baseline_accuracy = (baseline_test['baseline_prediction'] == y_test).mean()
+print(f'Baseline accuracy: {baseline_accuracy}')
+
+for i in range(num_epochs):
+    train_correct = 0
+    train_size = 0
+
+    for j, (X_train, y_train) in enumerate(trainloader):
+        # calculate output
+        output = model(X_train)
+
+        # calculate loss
+        loss = loss_fn(output, y_train.reshape(-1, 1))
+
+        # backprop
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        model.eval()
+        with torch.no_grad():
+            predicted = model(torch.tensor(X_train, dtype=torch.float32))
+            train_correct += (predicted.reshape(-1).detach().numpy().round() == y_train.detach().numpy()).sum()
+            train_size += len(y_train.detach().numpy())
+        model.train()
+
+    # accuracy
+    train_acc = train_correct/train_size
+    model.eval()
+    with torch.no_grad():
+        predicted = model(torch.tensor(X_test, dtype=torch.float32))
+        test_acc = (predicted.reshape(-1).detach().numpy().round() == y_test).mean()
+
+    model.train()
+    scheduler.step()
+
+
+    # print(predicted)
+    # if i % 5 == 0:
+    losses.append(loss)
+    train_accur.append(train_acc)
+    test_accur.append(test_acc)
+    print("epoch {}\tloss : {}\t train accuracy : {}\t test accuracy : {}".format((i+1), loss, train_acc, test_acc))
+    print(f'Time elapsed: {time.time()-start_time}')
+    print(f'Estimated time remaining: {((time.time() - start_time) * (num_epochs - i+1) / (i+1)):.2f} seconds')
+
+print(f'Losses: {losses}')
+
+fig, ax1 = plt.subplots()
+
+color = 'tab:red'
+ax1.set_xlabel('Epoch')
+ax1.set_ylabel('Training Loss', color=color)
+ax1.plot([tensor.item() for tensor in losses], color=color)
+ax1.tick_params(axis='y', labelcolor=color)
+
+ax2 = ax1.twinx()
+
+color = 'tab:blue'
+ax2.set_ylabel('Train Accuracy', color=color)
+ax2.plot(train_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+color = 'tab:green'
+ax2.set_ylabel('Accuracy', color=color)
+ax2.plot(test_accur, color=color)
+ax2.tick_params(axis='y', labelcolor=color)
+
+fig.tight_layout()
+# plt.show()
+fig.savefig(f'{wd}/models/model_2_26_batch128lr01_{losses[-1]:.2f}.png')
+plt.clf()
+
+
+torch.save(model.state_dict(), f'{wd}/models/model_2_26_batch128lr01_{losses[-1]:.2f}.pth')
 
 
 #---------------------------------------------

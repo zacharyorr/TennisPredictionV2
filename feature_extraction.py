@@ -554,7 +554,6 @@ def gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility
     # To compute expected runtime
     start_time = time.time()
     num_loops = ((match_df.copy()['tourney_date'].max() - start_date)/rp).days + 1
-    # num_loops = ((datetime.datetime.strptime(match_df.copy()['tourney_date'].max(), '%Y-%m-%d')-start_date)/rp).days + 1
     loops_complete = 0
 
 
@@ -670,38 +669,6 @@ def gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility
     return output_df
 
 
-def duplicate_df(match_df):
-    """this function is not currently in use. originally, it duplicated p1/p2 features to make the data symmetrical.
-    now, split_df2 has this purpose"""
-    print(f'Duplicating DataFrame with flipped scores (to balance neural network output)')
-    match_df_1 = match_df.copy(deep=True)
-    match_df_1['winner'] = 0
-    match_df_2 = match_df.copy(deep=True)
-    match_df_2['winner'] = 1
-
-    # Moves the columns around for P2 winner dataframe. Moves all columns that start with P1 to the columns that start
-    # with P2
-
-    column_headers = match_df_1.columns.values
-    p1_colnames = []
-    for i in column_headers:
-        if str(i)[0:3] == 'p1_':
-            p1_colnames.append(i[3:])
-
-    for arg in [0, 1]:
-        list = ['p1_', 'p2_']
-        list1 = ['p2_', 'p1_']
-        for i in p1_colnames:
-            match_df_2.loc[:, f'{list[arg]}{i}'] = match_df_1.loc[:, f'{list1[arg]}{i}']
-
-    combined_df = []
-    combined_df.append(match_df_1)
-    combined_df.append(match_df_2)
-    match_df = pd.concat(combined_df, axis=0, ignore_index=True).sort_values(by='tourney_date',ascending=True)
-    # print(match_df[match_df['tourney_name'] == 'Wroclaw CH'])
-    return match_df
-
-
 def date_features(match_df):
     """this function adds date features (year, sin(day) and cos(day)) to the dataset. sin and cos are used for the day
     features to account for seasonality. Dec 31 and Jan 1 should be considered relatively close, but if the data were
@@ -722,6 +689,7 @@ def tourney_level(match_df):
     match_df['tourney_level_consolidated'] = match_df['tourney_level']
     match_df['tourney_level_consolidated'] = match_df['tourney_level_consolidated'].replace('G','ATP').replace('M','ATP').replace('A','ATP').replace('D','ATP').replace('F','ATP').replace('15','S').replace('25','S')
     print(f'Consolidated tournament levels into: {match_df.tourney_level_consolidated.unique()}.\n')
+
     return match_df
 
 
@@ -922,8 +890,6 @@ def split_df_2(match_df):
 
     # Moves the columns around for P2 winner dataframe. Moves all columns that start with P1 to the columns that start
     # with P2
-    p1_col_list = []
-    p2_col_list = []
     col_list = []
 
     for col in match_df.columns:
@@ -1025,29 +991,36 @@ def to_csv(match_df):
 
 
 def momentum(match_df):
+    '''Calculates rudimentary player momentum, as a win-streak and loss-streak as the time of the match'''
     print(f'\nCalculating player momentum...')
     df = match_df.copy()
     output_df = match_df.copy()
-    # print(df.loc[df.p1_id == 104925, :])
+
+    # sets the index for both dataframes. df will be transformed into a player database and output_df will remain output
     df['dt_index'] = df['tourney_date'] + df['match_num'].astype('timedelta64[s]')
     output_df['dt_index'] = output_df['tourney_date'] + output_df['match_num'].astype('timedelta64[s]')
     df = df.reset_index(drop=True)
     output_df = output_df.reset_index(drop=True)
 
+    # creates 2 dataframes to pull information on all matches, for both p1 and p2
     p1_df = df.loc[:, ['p1_id', 'dt_index']].rename(columns={'p1_id':'player_id'})
     p1_df['winner'] = 1
-
     p2_df = df.loc[:, ['p2_id', 'dt_index']].rename(columns={'p2_id':'player_id'})
     p2_df['winner'] = -1
 
+    # concatenates these two newly created databases into a new, larger database
     df = pd.concat([p1_df,p2_df], ignore_index=True)
     df = df.sort_values(['player_id','dt_index'])
 
+    # there are a few extraneous matches, where a player appears twice on the same match. this removes duplicates
     bd_shape = df.shape[0]
     df = df.drop_duplicates(subset=['player_id','dt_index'])
     print(f'Dropped {bd_shape - df.shape[0]:.0f} duplicate entries')
 
+    # this groupy calculates the split points, where the player's matches switch from w->l or l->w
     grouped = df.groupby(['player_id', ((df.winner != df.winner.shift(1)).cumsum())], group_keys=False)
+
+    # this calculates the win and loss streaks for both players
     print(f'Calculating win-streak...')
     df['win_streak'] = grouped['winner'].progress_apply(lambda x: x.eq(1).cumsum())
     df['win_streak'] = df.groupby('player_id')['win_streak'].shift(1).fillna(0).astype(int)
@@ -1055,23 +1028,25 @@ def momentum(match_df):
     df['loss_streak'] = grouped['winner'].progress_apply(lambda x: x.eq(-1).cumsum())
     df['loss_streak'] = df.groupby('player_id')['loss_streak'].shift(1).fillna(0).astype(int)
 
-    # df = df.set_index([''])
-    #
+    # merges the values in the player dataframe with the match dataframe, to pull information for both p1 and p2
     for player in ['p1','p2']:
         output_df = pd.merge(output_df, df, how='left', left_on=[f'{player}_id','dt_index'], right_on=['player_id','dt_index'], suffixes=('','_y'))
         output_df = output_df.drop(['player_id','winner_y'], axis=1)
         output_df = output_df.rename(columns={'win_streak':f'{player}_win_streak','loss_streak': f'{player}_loss_streak'})
 
+    # sorts the values for output
     output_df = output_df.sort_values('dt_index')
 
     return output_df
 
 
 def surfaces(match_df):
+    '''this function creates dummy variables for the different surface types'''
     print(f'\nSetting dummy variables for surface type...')
     df = match_df.copy()
     df = df.reset_index(drop=True)
-    # print(df.head(10))
+
+    # removes any matches that have invalid surface types
     print(f'Number of NA in surface type: {df.surface.isna().sum()}')
     if df.surface.isna().sum() > 0:
         print(f'Dropping invalid surface types...')
@@ -1083,45 +1058,53 @@ def surfaces(match_df):
 
 
 def surface_wins(match_df):
+    '''this function calculates player performance on each surface (w/l). this does not take time dependency into
+    account, unlike the previous wins counter. this is due to performance reasons'''
     print(f'\nCalculating player surface performance')
     df = match_df.copy()
     surfaces = pd.unique(df.surface)
     print(df.head(10))
     df['dt_index'] = df['tourney_date'] + df['match_num'].astype('timedelta64[s]')
+
+    # creates 2 dataframes to pull information on all matches, for both p1 and p2
     p1_df = df.loc[:, ['p1_id','surface','dt_index']].rename(columns={'p1_id': 'player_id'})
     p1_df['winner'] = 1
-
     p2_df = df.loc[:, ['p2_id','surface','dt_index']].rename(columns={'p2_id': 'player_id'})
     p2_df['winner'] = -1
 
     player_df = pd.concat([p1_df, p2_df]).reset_index()
 
+    # drops any duplciate entries from the dataframe to avoid double counting
     bd_shape = player_df.shape[0]
     player_df = player_df.drop_duplicates(subset=['player_id','dt_index'])
     print(f'Dropped {bd_shape - player_df.shape[0]:.0f} duplicate entries')
 
+    # creates dummy variables
     dummies = pd.get_dummies(player_df['surface'])
-
     player_df = player_df.join(dummies)
     for surface in surfaces:
         player_df[f'{surface}_result'] = player_df[surface] * player_df.winner
 
+    # calculates wins and losses at the time of each match, for all players, on every surface
     player_df = player_df.sort_values(['player_id','dt_index'])
     grouped = player_df.groupby(['player_id'], group_keys=False)
     for surface in surfaces:
         player_df[f'{surface}_wins'] = grouped[f'{surface}_result'].progress_apply(lambda x: x.eq(1).cumsum())
         player_df[f'{surface}_losses'] = grouped[f'{surface}_result'].progress_apply(lambda x: x.eq(-1).cumsum())
 
+    # because win streaks only take past matches into account, this shifts every player's totals back by one row
     grouped = player_df.groupby(['player_id'])
     for surface in surfaces:
         player_df[f'{surface}_wins'] = grouped[f'{surface}_wins'].shift(1).fillna(0).astype(int)
         player_df[f'{surface}_losses'] = grouped[f'{surface}_losses'].shift(1).fillna(0).astype(int)
 
+    # drops unnecessary columns before joining the calculations back to the original dataframe
     player_df = player_df.drop(['index', 'winner'], axis=1)
     player_df = player_df.drop(surfaces, axis=1)
     for surface in surfaces:
         player_df = player_df.drop([f'{surface}_result'], axis=1)
 
+    # joins the player dataframe back with the match dataframe twice, once for p1 and a second for p2
     for player in ['p1','p2']:
         df = pd.merge(df, player_df, how='left', left_on=[f'{player}_id','dt_index'], right_on=['player_id','dt_index'], suffixes=('','_y'))
         df = df.drop(['player_id','surface_y'], axis=1)
@@ -1129,50 +1112,61 @@ def surface_wins(match_df):
             df = df.rename(columns={f'{surface}_wins': f'{player}_{surface.lower()}_wins'})
             df = df.rename(columns={f'{surface}_losses': f'{player}_{surface.lower()}_losses'})
 
+    # sorts by the index before returning the output
     df = df.sort_values('dt_index')
-
-    print(df[(df.p1_id == 104925) | (df.p2_id == 104925)].head(100))
 
     return df
 
 
 def player_age(match_df):
+    '''this function calculates player age, and fills in missing values with approximations based on the career length
+    and time that similar players have played'''
     print(f'Fixing player ages')
     df = match_df.copy()
     df['dt_index'] = df['tourney_date'] + df['match_num'].astype('timedelta64[s]')
     df = df.reset_index(drop=True).sort_values('dt_index')
 
+    # creates 2 dataframes to pull information on all matches, for both p1 and p2
     p1_df = df.loc[:, ['p1_id','p1_age','dt_index']].rename(columns={'p1_id': 'player_id', 'p1_age': 'age'})
     p2_df = df.loc[:, ['p2_id','p2_age','dt_index']].rename(columns={'p2_id': 'player_id', 'p2_age': 'age'})
-
     player_df = pd.concat([p1_df, p2_df]).reset_index().sort_values('dt_index')
 
+    # drops any duplicate entries from the player dataframe
     bd_shape = player_df.shape[0]
     player_df = player_df.drop_duplicates(subset=['player_id', 'dt_index'])
     print(f'Dropped {bd_shape - player_df.shape[0]:.0f} duplicate entries')
 
+    # groups by player_id ahead of time to save time
     grouped = player_df.groupby('player_id')
 
+    # calculates variables to estimate unknown player ages by (decade, years_active)
     player_df['years_active'] = grouped['dt_index'].transform('max').values - grouped['dt_index'].transform('min').values
     player_df.years_active = player_df.years_active.dt.days / 365
     player_df['years_active_rounded'] = player_df.years_active.round(0).astype(int)
     player_df['start_decade'] = player_df['dt_index'].dt.year.round(-1)
 
+    """this section actively estimates missing age data for players. first, it attempts to see if there were any other
+    players that played for roughly the same amount of time, and began playing in the same decade. if such players
+    exist, the function uses the mean of those players to estimate the missing age. if no such players exist, it
+    repeats this calculation but removes the restriction that the players must be from the same decade. any
+    remaining missing ages are dropped"""
     first_match = player_df.groupby('player_id').first().reset_index(drop=False).drop('index', axis=1)
     first_match['age_filled'] = first_match.groupby(['years_active_rounded', 'start_decade'])['age'].transform(lambda x: x.fillna(x.mean()))
     first_match['age_filled'] = first_match.groupby(['years_active_rounded'])['age_filled'].transform(lambda x: x.fillna(x.mean()))
     first_match = first_match.dropna(subset='age_filled')
     first_match = first_match.drop(['age', 'years_active', 'years_active_rounded', 'start_decade'], axis=1)
 
+    # merges the first match time back into the player_df
     player_df = pd.merge(player_df, first_match, how='left', left_on=['player_id', 'dt_index'], right_on=['player_id', 'dt_index'], suffixes=('','y'))
     player_df['age'] = player_df['age'].fillna(player_df.age_filled)
-
     player_df['time_since_start'] = player_df.dt_index - player_df.groupby('player_id')['dt_index'].transform('first')
     player_df.age = player_df.groupby('player_id')['age'].transform('first') + player_df.time_since_start.dt.days / 365
     player_df.age = player_df.age.round(1)
 
+    # removes unneccessary features
     player_df = player_df.loc[:, ['player_id', 'age', 'dt_index']]
 
+    # changes are merged back into the original dataframe
     for player in ['p1', 'p2']:
         df = pd.merge(df, player_df, how='left', left_on=[f'{player}_id', 'dt_index'], right_on=['player_id', 'dt_index'], suffixes=('','y'))
         df = df.drop([f'{player}_age', 'player_id'], axis=1)
@@ -1182,31 +1176,33 @@ def player_age(match_df):
 
 
 def player_inactive_period(match_df):
+    """this function calculates the number of days a player has been inactive"""
     df = match_df.copy()
 
     df['dt_index'] = df['tourney_date'] + df['match_num'].astype('timedelta64[s]')
     df = df.reset_index(drop=True).sort_values('dt_index')
 
+    # creates 2 dataframes to pull information on all matches, for both p1 and p2
     p1_df = df.loc[:, ['p1_id','dt_index']].rename(columns={'p1_id': 'player_id'})
     p2_df = df.loc[:, ['p2_id','dt_index']].rename(columns={'p2_id': 'player_id'})
 
+    # groups by player_id and calculates the time difference between the current match and the previous match
     player_df = pd.concat([p1_df, p2_df]).reset_index().sort_values('dt_index')
     player_df['days_inactive'] = player_df.groupby('player_id')['dt_index'].transform(lambda x: x.diff()).fillna(pd.Timedelta(0, unit='s'))
     player_df['days_inactive'] = player_df['days_inactive'].round('1d').dt.days
     player_df = player_df.drop(['index'], axis=1)
 
+    # drops any duplicate values
     shape_bf = player_df.shape[0]
     player_df = player_df.drop_duplicates(subset=['player_id', 'dt_index'])
     print(f'Removing {shape_bf - player_df.shape[0]} duplicates from inactivity df...')
 
-    print(player_df[player_df.player_id == 104925].head(30))
-
+    # merges the values in the player dataframe with the match dataframe
     for player in ['p1', 'p2']:
         df = pd.merge(df, player_df, how='left', left_on=[f'{player}_id', 'dt_index'], right_on=['player_id', 'dt_index'], suffixes=('','y'))
         df = df.drop(['player_id'], axis=1)
         df = df.rename(columns={'days_inactive': f'{player}_days_inactive'})
 
-    # print(df[(df.p1_id == 104925) | (df.p2_id == 104925)].head(30))
     return df
 
 
@@ -1238,21 +1234,7 @@ def get_location(match_df, tourney_list, tourney_link):
     print(tourney_source.country[0])
     print(tourney_source.country[0][0])
     print(len(tourney_source.country.keys()))
-    # tourney_source = tourney_source[tourney_source['country'].progress_apply(lambda x: len(x)) > 0]
-    # tourney_source['country'] = tourney_source['country'].progress_apply(lambda x: x[0])
-    # tourney_source = tourney_source[(len(tourney_source.country[0]) > 0)]
-    # print((tourney_source.loc[0, ['country']]))
-    # # print(len(tourney_source.loc[1, ['country']]))
-    #
-    # for i in range(tourney_source.shape[0]):
-    #     if len(tourney_source.loc[i, ['country']]) > 0:
-    #         tourney_source.loc[i, ['country']] = tourney_source.loc[i, ['country']][0]
-    #     else:
-    #         tourney_source.loc[i, ['country']] = ''
 
-    # print(geotext.GeoText('London').cities)
-    # print(geoSearch('madrid'))
-    # tourney_source['country'] = tourney_source['tourney_location'].progress_apply(lambda x: geoSearch(x).countries[0])
     print(tourney_source.head(20))
     print(df.tail(30))
 
@@ -1260,14 +1242,15 @@ def get_location(match_df, tourney_list, tourney_link):
 
 
 def gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff):
+    """this function calculates the Glicko ratings for each player, dependent on surface. it creates 4 different
+    dataframes (one for each surface) with date-dependent Glicko ratings. these 4 different dataframes are then merged
+    together to recreate the original dataframe, but with the added features"""
     print(f'\nCalculating Glicko-2 surface ratings...')
 
     # This code section sets up the output dataframe to be populated later.
     output_df = match_df.copy(deep=True)
-
     surfaces = output_df['surface'].unique()
-    print(surfaces)
-    # rps = dict([Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period])
+
 
     output_df['p1_glicko_surface_rating'] = 0
     output_df['p2_glicko_surface_rating'] = 0
@@ -1278,17 +1261,20 @@ def gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_vol
 
     output_dicts = []
 
+    # iterates through all available surfaces, creates glicko dictionary for all of them
     for surface in surfaces:
-        # This section creates a list of unique player ID's from all matches played in match_df
-        # Time-dependent Glicko ratings will be stored in this dataframe (later dictionary)
+        # filters the dataframe to include matches only on the surface in question
         df = match_df[match_df['surface'] == surface].copy()
         surface_df = match_df[match_df['surface'] == surface].copy()
+
+        # This section creates a list of unique player ID's from all matches played in match_df
+        # Time-dependent Glicko ratings will be stored in this dataframe (later dictionary)
         s1 = pd.Series(df.loc[:, 'p1_id'])
         s2 = pd.Series(df.loc[:, 'p2_id'])
         df = pd.concat([s1, s2], ignore_index=True).drop_duplicates(keep='first').reset_index()
         df = df.set_index(0, drop=False)
         df = df.drop(['index'], axis=1)
-        print(f'Glicko ranking database created...')
+        # print(f'Glicko ranking database created...')
 
         # Setting each row value to an empty list. These lists will be populated with each player's opponents' Glicko stats
         # They will then be wiped and re-populated in each defined rating period
@@ -1315,21 +1301,20 @@ def gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_vol
         glicko_dict = df.copy().to_dict(orient='index')
         ratings_dict = df.copy().to_dict(orient='index')
         match_dict = output_df[output_df['surface'] == surface].to_dict(orient='index')
-        print(f'Dictionaries created...\n')
+        # print(f'Dictionaries created...\n')
 
         # Creates a unique Glicko player for each unique player ID in the DataFrame
-        print(f'Creating Glicko players...\nInitial Rating: {initial_rating}\nInitial Deviation: {initial_deviation}\nVolatility: {initial_volatility}')
+        # print(f'Creating Glicko players...\nInitial Rating: {initial_rating}\nInitial Deviation: {initial_deviation}\nVolatility: {initial_volatility}')
         for key in enumerate(df.copy().index):
             glicko_dict[key[1]] = Player(initial_rating, initial_deviation, initial_volatility)
-        print(f'\nGlicko players created...')
+        # print(f'\nGlicko players created...')
         rate_period_date = start_date
-        print(f'\nSolving for Glicko ratings, period = {rp} days')
+        print(f'\nSolving for Glicko {surface}ratings, period = {rp} days')
         print(f'Start date: {rate_period_date}\n')
 
         # To compute expected runtime
         start_time = time.time()
         num_loops = ((surface_df['tourney_date'].max() - start_date)/rp).days + 1
-        # num_loops = ((datetime.datetime.strptime(match_df.copy()['tourney_date'].max(), '%Y-%m-%d')-start_date)/rp).days + 1
         loops_complete = 0
 
 
@@ -1338,7 +1323,6 @@ def gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_vol
         rating period is set to 90 days, then this while loop will occur 4 times. While this procedure is not necessary
         to compute Glicko-1 scores or ELO, it is necessary to calculate Glicko-2"""
         while rate_period_date < surface_df['tourney_date'].max():
-        # while rate_period_date < datetime.datetime.strptime(match_df.copy()['tourney_date'].max(), '%Y-%m-%d'):
             # Sets an end date for this period (current day + rating period). Ex: (Jan 1 + 40 days) = ~Feb 10
             future_period_date = rate_period_date + datetime.timedelta(days=rp)
             # Filters the match DataFrame for all matches that occur in this time period
@@ -1461,11 +1445,8 @@ def main():
     # removing walkovers and retirements.
     match_df = remove_walkovers(match_df)
 
-    # NOT CURRENTLY USED
-    # renames winner/loser to p1/p2, move features as necessary
-    # match_df = split_df(match_df)
-
     match_df = rename_columns(match_df)
+
     # removing unneeded features
     match_df = remove_features(match_df)
 
@@ -1489,7 +1470,7 @@ def main():
     # match_df = match_df[match_df['tourney_level'] == 'ATP']
 
     # pull rankings and append to dataframe
-    # match_df = set_h2h(match_df, rankings_df)
+    match_df = set_h2h(match_df, rankings_df)
 
     # calculates player scores to input into Glicko-2 ranking system
     winner_weight = .6
@@ -1505,24 +1486,24 @@ def main():
     rating_period = 40
     show_rankings = 100
     rd_cutoff = 80
-    # match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
+    match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
 
 
     # adds date features (year, sin(day), cos(day)) to the dataframe
     match_df = date_features(match_df)
 
     # consolidates all tournament levels into 'ATP', 'C', and 'S'
-    # match_df = tourney_level(match_df)
+    match_df = tourney_level(match_df)
 
     # calculates a rolling sum of p1/p2 wins and losses at all levels in the following time periods
     time_periods = ['l6m', 'l1y', 'career']
     rolling_windows = ['182d', '365d', '30000d']
-    # match_df = player_wins(match_df, time_periods, rolling_windows)
+    match_df = player_wins(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of p1/p2 wins and losses at their current tournament in the following time periods
     time_periods = ['l1y', 'l3y', 'career']
     rolling_windows = ['365d', '1095d', '30000d']
-    # match_df = tourney_history(match_df, time_periods, rolling_windows)
+    match_df = tourney_history(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of time on court for all players in the following time periods.
     # fills missing match time data with averages; rounds match_games to games_base and rounds year to year_base
@@ -1533,10 +1514,10 @@ def main():
     match_df = time_on_court(match_df, games_base, year_base, time_periods, rolling_windows)
 
     # adds momentum in the form of win and loss streak
-    # match_df = momentum(match_df)
+    match_df = momentum(match_df)
 
     # adds one-hot variables for surface type
-    # match_df = surfaces(match_df)
+    match_df = surfaces(match_df)
 
     # using the following input parameters, calculates the Glicko-2 ratings of players in dataset on match surface
     initial_rating = 2300
@@ -1548,26 +1529,22 @@ def main():
     Carpet_rating_period = 360
     show_rankings = 100
     rd_cutoff = 100
-    # match_df = gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff)
+    match_df = gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff)
 
     # calculates player strength on surface (wins and losses)
-    # match_df = surface_wins(match_df)
+    match_df = surface_wins(match_df)
 
     # calculates player ages
-    # match_df = player_age(match_df)
+    match_df = player_age(match_df)
 
     # calculates the length of time a player has been inactive
-    # match_df = player_inactive_period(match_df)
+    match_df = player_inactive_period(match_df)
 
     # splits the dataframe, for half of the dataset, makes p1 the winner, and for the other half, makes p2 the winner
-    # match_df = split_df_2(match_df)
-
-    # NO LONGER USED
-    # duplicates the dataframe to make the neural network symmetrical
-    # match_df = duplicate_df(match_df)
+    match_df = split_df_2(match_df)
 
     # saves the dataframe as a parquet, outputs necessary features to the neural network
-    # to_parquet(match_df)
+    to_parquet(match_df)
 
     print(match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)].head(100))
 
