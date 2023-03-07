@@ -72,7 +72,6 @@ def import_players():
 
 def import_matches(start_year):
     match_df = pd.read_parquet(f'{wd}/Data/output_df.parquet.gzip')
-    match_df = match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)]
 
     # match_df['tourney_date'] = match_df['tourney_date']
     # print(f'Match_df shape')
@@ -80,6 +79,7 @@ def import_matches(start_year):
     match_df = match_df[match_df.tourney_date >= pd.to_datetime(start_year, format='%Y')]
     # print(match_df.shape[0])
     match_df = match_df[match_df.ATP == 1]
+    # match_df = match_df[match_df.best_of_3 == 0]
     # print(match_df.shape[0])
 
     return match_df
@@ -168,6 +168,47 @@ class Net2(nn.Module):
     x = torch.sigmoid(self.fc6(x))
     return x
 
+class Net4(nn.Module):
+  def __init__(self,input_shape, input_p, p):
+    super(Net4,self).__init__()
+    self.fc1 = nn.Linear(input_shape,128)
+    self.fc2 = nn.Linear(128,256)
+    self.fc3 = nn.Linear(256,512)
+    self.fc4 = nn.Linear(512,256)
+    self.fc5 = nn.Linear(256,64)
+    self.fc6 = nn.Linear(64,16)
+    self.fc7 = nn.Linear(16,4)
+    self.fc8 = nn.Linear(4, 1)
+    self.dropout_input = nn.Dropout(input_p)
+    self.dropout = nn.Dropout(p)
+
+  def forward(self,x):
+    x = torch.relu(self.fc1(x))
+    x = self.dropout(x)
+
+    x = torch.relu(self.fc2(x))
+    x = self.dropout(x)
+
+    x = torch.relu(self.fc3(x))
+    x = self.dropout(x)
+
+    x = torch.relu(self.fc4(x))
+    x = self.dropout(x)
+
+    x = torch.relu(self.fc5(x))
+    x = self.dropout(x)
+
+    x = torch.relu(self.fc6(x))
+    x = self.dropout_input(x)
+
+    x = torch.relu(self.fc7(x))
+    # x = self.dropout(x)
+
+    x = torch.sigmoid(self.fc8(x))
+    return x
+
+
+
 def load_model(name, model_type):
     model = model_type
     model.load_state_dict(torch.load(f'{wd}/models/{name}.pth'))
@@ -179,7 +220,7 @@ def load_model(name, model_type):
 
 def inference(match_df, model):
     df = match_df.copy()
-    print(df.head(20))
+    # print(df.head(20))
     X = df.drop(['p1_seed', 'p1_ht', 'p1_age', 'p2_seed', 'p2_ht', 'p2_age', 'p1_rank',
        'p1_rank_points', 'p2_rank', 'p2_rank_points', 'p1_home',
        'p2_home', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games','index','level_0','tourney_id','tourney_name','surface',
@@ -325,8 +366,8 @@ def graphing(bankrolls, dates):
 
 def main():
     start_year = 2022
-    start_date = pd.to_datetime('20220601',format='%Y%m%d')
-    end_year = 2022
+    start_date = pd.to_datetime('20220101',format='%Y%m%d')
+    end_year = 2023
     odds_df = import_odds(start_year, end_year, start_date)
     # print(odds_df.head(10))
     odds_df = clean_odds(odds_df)
@@ -341,14 +382,14 @@ def main():
 
     match_df = match_index(match_df, odds_df, player_df)
 
-    model_name = 'model_2_26_0.09'
-    model_type = Net3(input_shape=105)
+    model_name = 'model_3layers_batch64lr0.001_0.68602'
+    model_type = Net4(input_shape=105, input_p=.3, p=.5)
     model = load_model(model_name, model_type)
 
     match_df = inference(match_df, model)
     match_df = betting_calc(match_df)
     bankroll = 1
-    fraction = .033
+    fraction = .03
     bankrolls, dates = fractional_kelly(match_df, bankroll, fraction)
     graphing(bankrolls, dates)
 

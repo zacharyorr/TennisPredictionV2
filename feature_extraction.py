@@ -774,7 +774,7 @@ def tourney_history(match_df, time_periods, rolling_windows):
     df = match_df.copy(deep=True)
     # creating an index of each unique tournament. The current index has the unique tournament code, followed by the year.
     # this creates a new index which removes the year, creating an index of unique tournament ID's.
-    df['tourney_code_no_year'] = df['tourney_id'].str.split(pat='-',expand=True,n=1)[1]
+    df['tourney_code_no_year'] = df['tourney_id'].str.split(pat='-',expand=True,n=1)[1].str.zfill(6)
 
     """creates a de facto composite key for the dataset. In the unmodified dataset, the tourney_date column is the same
     for each match in the tournament, even if these matches occurred on different days. this would lead to data leakage
@@ -801,9 +801,9 @@ def tourney_history(match_df, time_periods, rolling_windows):
     columns (and the appropriate time index) after this for loop."""
     for i in range(len(time_periods)):
         df[f'p1_w_tourney_{time_periods[i]}'] = \
-            p1_grouped_df['tourney_code_no_year'].transform(lambda x: x.shift(1).rolling(rolling_windows[i]).count()).astype(int)
+            p1_grouped_df['tourney_code_no_year'].transform(lambda x: x.rolling(rolling_windows[i], closed='left', min_periods=0).count()).astype(int)
         df[f'p2_l_tourney_{time_periods[i]}'] = \
-            p2_grouped_df['tourney_code_no_year'].transform(lambda x: x.shift(1).rolling(rolling_windows[i]).count()).astype(int)
+            p2_grouped_df['tourney_code_no_year'].transform(lambda x: x.rolling(rolling_windows[i], closed='left', min_periods=0).count()).astype(int)
         # adding lists of features to make further transformations easier
         p2_list.append(f'p2_l_tourney_{time_periods[i]}')
         p1_list.append(f'p1_w_tourney_{time_periods[i]}')
@@ -821,7 +821,7 @@ def tourney_history(match_df, time_periods, rolling_windows):
     merge_df = df[p2_list].copy()
     merge_df.loc[:, p2_elist] += 1
     merge_df = merge_df.rename(columns={
-        'p2_l_tourney_l1y':'p1_l_tourney_l1y',
+        'p2_l_tourney_l6m':'p1_l_tourney_l6m',
         'p2_l_tourney_l3y':'p1_l_tourney_l3y',
         'p2_l_tourney_career':'p1_l_tourney_career'
     })
@@ -842,7 +842,7 @@ def tourney_history(match_df, time_periods, rolling_windows):
     merge_df = df[p1_list].copy()
     merge_df.loc[:, p1_elist] += 1
     merge_df = merge_df.rename(columns={
-        'p1_w_tourney_l1y':'p2_w_tourney_l1y',
+        'p1_w_tourney_l6m':'p2_w_tourney_l6m',
         'p1_w_tourney_l3y':'p2_w_tourney_l3y',
         'p1_w_tourney_career':'p2_w_tourney_career'
     })
@@ -862,6 +862,74 @@ def tourney_history(match_df, time_periods, rolling_windows):
             for i in range(len(time_periods)):
                 df[f'{p}_{x}_tourney_{time_periods[i]}'] = df[f'{p}_{x}_tourney_{time_periods[i]}'].fillna(0).astype(int)
 
+    return df
+
+def tourney_history2(match_df, time_periods, rolling_windows):
+    # this section calculates historical player performance at the tournament in question, over the periods
+    # last year, last 3 years, and career
+    print('\nAdding player historical tournament performance...')
+    df = match_df.copy(deep=True)
+    # output_df = match_df.copy()
+    print(f'DF shape:')
+    print(df.shape[0])
+    # creating an index of each unique tournament. The current index has the unique tournament code, followed by the year.
+    # this creates a new index which removes the year, creating an index of unique tournament ID's.
+    df['tourney_code_no_year'] = df['tourney_id'].str.split(pat='-',expand=True,n=1)[1].str.zfill(6)
+
+    """creates a de facto composite key for the dataset. In the unmodified dataset, the tourney_date column is the same
+    for each match in the tournament, even if these matches occurred on different days. this would lead to data leakage
+    if the individual matches were not ordered. the match_num column is the order of matches in each tournament, so
+    combining the two columns allows us to correctly sort by date and time"""
+    df['dt_index'] = df['tourney_date'] + df['match_num'].astype('timedelta64[s]')
+    # output_df['dt_index'] = output_df['tourney_date'] + output_df['match_num'].astype('timedelta64[s]')
+    df = df.reset_index(drop=True)
+    # output_df = output_df.reset_index(drop=True)
+
+    # creates 2 dataframes to pull information on all matches, for both p1 and p2
+    p1_df = df.loc[:, ['p1_id', 'dt_index', 'tourney_code_no_year']].rename(columns={'p1_id':'player_id'})
+    p1_df['winner'] = 1
+    p2_df = df.loc[:, ['p2_id', 'dt_index', 'tourney_code_no_year']].rename(columns={'p2_id':'player_id'})
+    p2_df['winner'] = -1
+
+    # concatenates these two newly created databases into a new, larger database
+    player_df = pd.concat([p1_df,p2_df], ignore_index=True)
+    player_df = player_df.sort_values(['player_id','dt_index'])
+
+    # there are a few extraneous matches, where a player appears twice on the same match. this removes duplicates
+    bd_shape = player_df.shape[0]
+    player_df = player_df.drop_duplicates(subset=['player_id','dt_index', 'tourney_code_no_year'], keep='last')
+    player_df = player_df.set_index('dt_index', drop=True)
+    # print(player_df.head(10))
+
+    print(f'Dropped {bd_shape - player_df.shape[0]:.0f} duplicate entries')
+
+    for i in range(len(time_periods)):
+        grouped = player_df.groupby(['player_id', 'tourney_code_no_year'], group_keys=False)
+
+        player_df[f'player_w_tourney_{time_periods[i]}'] = grouped['winner'].transform(lambda x: x.eq(1).rolling(rolling_windows[i], closed='left', min_periods=0).sum().fillna(0).astype(int))
+        player_df[f'player_l_tourney_{time_periods[i]}'] = grouped['winner'].transform(lambda x: x.eq(-1).rolling(rolling_windows[i], closed='left', min_periods=0).sum().fillna(0).astype(int))
+        # player_df[f'player_l_tourney_{time_periods[i]}'] = grouped['winner'].progress_apply(lambda x: x.rolling(rolling_windows[i]).eq(-1).cumsum())
+
+
+    # drops unnecessary columns before joining the calculations back to the original dataframe
+    player_df = player_df.drop(['winner'], axis=1)
+    player_df = player_df.reset_index(drop=False)
+
+
+    # joins the player dataframe back with the match dataframe twice, once for p1 and a second for p2
+    for player in ['p1','p2']:
+        df = pd.merge(df, player_df, how='left', left_on=[f'{player}_id','dt_index', 'tourney_code_no_year'], right_on=['player_id','dt_index', 'tourney_code_no_year'], suffixes=('','_y'))
+        df = df.drop(['player_id'], axis=1)
+        for time in time_periods:
+            df = df.rename(columns={f'player_w_tourney_{time}': f'{player}_w_tourney_{time}'})
+            df = df.rename(columns={f'player_l_tourney_{time}': f'{player}_l_tourney_{time}'})
+
+    # sorts by the i
+    df = df.sort_values('dt_index')
+    # print(player_df[player_df.player_id == 104925].head(50))
+    # print(df[(df.p1_id == 104925) | (df.p2_id == 104925)])
+    print(f'DF shape:')
+    print(df.shape[0])
     return df
 
 
@@ -909,6 +977,7 @@ def split_df_2(match_df):
     combined_df.append(p1_winner)
     combined_df.append(p2_winner_copy)
     match_df = pd.concat(combined_df, axis=0).sort_index()
+    match_df = match_df.sort_values('dt_index')
 
     return match_df
 
@@ -1466,8 +1535,7 @@ def main():
     match_df = one_hot_bof5(match_df)
 
     # removes a section of the dataframe, for computational purposes. if computing full dataset, comment out these lines
-    # match_df = match_df[800000:]
-    # match_df = match_df[match_df['tourney_level'] == 'ATP']
+    match_df = match_df[700000:]
 
     # pull rankings and append to dataframe
     match_df = set_h2h(match_df, rankings_df)
@@ -1500,10 +1568,15 @@ def main():
     rolling_windows = ['182d', '365d', '30000d']
     match_df = player_wins(match_df, time_periods, rolling_windows)
 
+    # match_df = match_df[match_df['surface'] == 'Hard']
+    # match_df = match_df[match_df.tourney_level_consolidated == 'ATP']
+    # match_df = match_df[match_df.tourney_name == 'Dubai']
+
+
     # calculates a rolling sum of p1/p2 wins and losses at their current tournament in the following time periods
-    time_periods = ['l1y', 'l3y', 'career']
-    rolling_windows = ['365d', '1095d', '30000d']
-    match_df = tourney_history(match_df, time_periods, rolling_windows)
+    time_periods = ['l6m', 'l3y', 'career']
+    rolling_windows = ['182d', '1095d', '30000d']
+    match_df = tourney_history2(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of time on court for all players in the following time periods.
     # fills missing match time data with averages; rounds match_games to games_base and rounds year to year_base
@@ -1527,7 +1600,7 @@ def main():
     Grass_rating_period = 100
     Clay_rating_period = 80
     Carpet_rating_period = 360
-    show_rankings = 100
+    show_rankings = 20
     rd_cutoff = 100
     match_df = gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff)
 
@@ -1544,9 +1617,11 @@ def main():
     match_df = split_df_2(match_df)
 
     # saves the dataframe as a parquet, outputs necessary features to the neural network
-    to_parquet(match_df)
+    # to_parquet(match_df)
 
-    print(match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)].head(100))
+    # print(match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)].head(100))
+    # print(match_df[(((match_df.p1_id == 104259) | (match_df.p2_id == 104259)) & (match_df.tourney_name == 'Dubai'))].head(100))
+    # print(match_df[(((match_df.p1_id == 104925) | (match_df.p2_id == 104925)) & (match_df.tourney_name == 'Dubai'))].head(200))
 
     # sound to notify on code completion
     winsound.Beep(500, 100)
