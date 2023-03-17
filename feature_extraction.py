@@ -1503,6 +1503,32 @@ def gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_vol
 
     return output_df
 
+def round_dummies(match_df):
+    df = match_df.copy()
+    dummies = pd.get_dummies(df['round'])
+    df = df.join(dummies)
+    df = df.sort_values(['tourney_date', 'match_num'])
+
+    return df
+
+
+def seed_dummies(match_df):
+    df = match_df.copy()
+    df['p1_seed'] = df['p1_seed'].astype('Int64')
+    df['p2_seed'] = df['p2_seed'].astype('Int64')
+
+    dummies = pd.get_dummies(df['p1_seed'])
+    dummies = dummies.add_prefix('p1_seed_')
+    df = df.join(dummies)
+
+    dummies = pd.get_dummies(df['p2_seed'])
+    dummies = dummies.add_prefix('p2_seed_')
+    df = df.join(dummies)
+
+    df = df.sort_values(['tourney_date', 'match_num'])
+
+    return df
+
 
 def main():
     # reading data; storing in DataFrames
@@ -1535,7 +1561,7 @@ def main():
     match_df = one_hot_bof5(match_df)
 
     # removes a section of the dataframe, for computational purposes. if computing full dataset, comment out these lines
-    match_df = match_df[700000:]
+    # match_df = match_df[700000:]
 
     # pull rankings and append to dataframe
     match_df = set_h2h(match_df, rankings_df)
@@ -1613,15 +1639,21 @@ def main():
     # calculates the length of time a player has been inactive
     match_df = player_inactive_period(match_df)
 
+    # creates dummy variables for the current round of the match
+    match_df = round_dummies(match_df)
+
+    # creates dummy variables for each player's seed
+    match_df = seed_dummies(match_df)
+
     # splits the dataframe, for half of the dataset, makes p1 the winner, and for the other half, makes p2 the winner
     match_df = split_df_2(match_df)
 
     # saves the dataframe as a parquet, outputs necessary features to the neural network
-    # to_parquet(match_df)
+    to_parquet(match_df)
 
     # print(match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)].head(100))
     # print(match_df[(((match_df.p1_id == 104259) | (match_df.p2_id == 104259)) & (match_df.tourney_name == 'Dubai'))].head(100))
-    # print(match_df[(((match_df.p1_id == 104925) | (match_df.p2_id == 104925)) & (match_df.tourney_name == 'Dubai'))].head(200))
+    print(match_df[(((match_df.p1_id == 104925) | (match_df.p2_id == 104925)) & (match_df.tourney_name == 'Dubai'))].head(200))
 
     # sound to notify on code completion
     winsound.Beep(500, 100)

@@ -1,22 +1,21 @@
 import os
-import random
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-import sklearn
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset, DataLoader
 import time
 import matplotlib.pyplot as plt
 import winsound
-
+import xgboost as xgb
+from sklearn.metrics import accuracy_score
 
 
 wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
 os.chdir(wd)
-pd.options.display.max_columns = 200
+pd.options.display.max_columns = None
 pd.options.display.width = None
 pd.options.display.max_rows = 200
 
@@ -193,10 +192,11 @@ def import_data():
 
 def feature_extraction(match_df, test_year, test_end):
 
-    print(match_df.shape[0])
+    # print(match_df.shape[0])
     match_df = match_df[match_df.tourney_date < pd.to_datetime(test_end, format='%Y-%m-%d')]
 
-    print(match_df.shape[0])
+    # print(match_df.shape[0])
+    # print(match_df.shape[1])
 
     train_size = match_df[match_df['tourney_date'] < pd.to_datetime(test_year, format='%Y-%m-%d')].shape[0] / match_df.shape[0]
     print(f'Train split: {train_size*100:.2f}%')
@@ -278,7 +278,21 @@ def feature_extraction(match_df, test_year, test_end):
     #    'p2_glicko_surface_deviation', 'p1_glicko_surface_volatility',
     #    'p2_glicko_surface_volatility'], axis=1)
 
-    # print(match_df.columns)
+    # print(match_df.shape[1])
+
+    # for i in range(1,34):
+    #     match_df = match_df.drop([f'p1_seed_{i}'], axis=1)
+    #     match_df = match_df.drop([f'p2_seed_{i}'], axis=1)
+    #
+    # match_df = match_df.drop(['p1_seed_35', 'p2_seed_34', 'p2_seed_35'], axis=1)
+    #
+    # match_df = match_df.drop(['F', 'SF', 'QF', 'R128', 'R64', 'R32', 'R16', 'RR', 'BR', 'ER', 'Q1', 'Q2', 'Q3', 'Q4'], axis=1)
+
+
+
+
+    print(match_df.columns.tolist())
+    print(match_df.shape[1])
 
     return match_df, train_size
 
@@ -290,17 +304,27 @@ def train_test_split_df(match_df, train_percent, ATP_only):
     X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=train_percent,shuffle=False, random_state=420)
     baseline_train, baseline_test = train_test_split(baseline_x, train_size=train_percent, shuffle=False, random_state=420)
 
+    print(X_test.shape[0])
+
+    if ATP_only == 1:
+        mask = X_test['ATP'] > 0
+        X_test = X_test[mask]
+        baseline_test = baseline_test[mask]
+        y_test = y_test[mask]
+
+
+    print(X_test.shape[0])
+
+    dtrain_reg = xgb.DMatrix(X_train, y_train)
+    dtest_reg = xgb.DMatrix(X_test, y_test)
+
+
     sc = StandardScaler()
     X_train = sc.fit_transform(X_train)
     X_test = sc.transform(X_test)
     # print(y_train)
 
-    if ATP_only == 1:
-        mask = X_test[:,16] > 0
-        X_test = X_test[mask]
-        baseline_test = baseline_test[mask]
-        y_test = y_test[mask]
-    return X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y
+    return X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, dtrain_reg, dtest_reg
 
 
 def run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, learning_rate, model, name):
@@ -309,8 +333,8 @@ def run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y
     trainset = dataset(X_train,y_train)
     trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=False)
 
-    optimizer = torch.optim.Adam(model.parameters(),lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=.1)
+    optimizer = torch.optim.AdamW(model.parameters(),lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=.8)
     loss_fn = nn.BCELoss()
     early_stopper = EarlyStopper(patience=7, minima_patience=5, min_delta=.001)
 
@@ -408,6 +432,49 @@ def run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y
 
 # def lin_reg(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y):
 
+def xgboost(train, test, params, n, y_test, early_stopping):
+
+    evals = [(train, "train"), (test, "validation")]
+
+    # print(early_stopping)
+
+    model = xgb.train(
+        params = params,
+        dtrain=train,
+        num_boost_round=n,
+        evals=evals,
+        verbose_eval=50,
+        early_stopping_rounds=early_stopping
+    )
+    preds = model.predict(test).round()
+
+    feature_scores = (model.get_score(importance_type='gain'))
+    # print(feature_scores)
+    importances = pd.DataFrame.from_dict(feature_scores, orient='index')
+    # print(importances)
+    importances = importances.rename(columns={0: 'importance'})
+    importances = importances.sort_values(by=['importance'], ascending=False)
+    print(importances.head(20))
+
+    acc = accuracy_score(y_test, preds)
+
+    print(f'Accuracy of XGBoost: {acc:.5f}')
+
+    results = xgb.cv(
+
+        params, train,
+
+        num_boost_round=n,
+
+        nfold=5,
+
+        early_stopping_rounds=20
+
+    )
+
+    print(results.head())
+    best_loss = results['test-logloss-mean'].min()
+    print(f'5f-cv loss: {best_loss:.5f}')
 
 
 def main():
@@ -420,8 +487,12 @@ def main():
     # print(match_df.tail(100))
 
     ATP_only = 1
-    X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y = train_test_split_df(match_df, train_percent, ATP_only)
+    X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, dtrain_reg, dtest_reg = train_test_split_df(match_df, train_percent, ATP_only)
 
+    params = {"objective": "binary:logistic", "tree_method": "gpu_hist"}
+    n=1000
+    early_stopping_rounds = 50
+    xgboost(dtrain_reg, dtest_reg, params, n, y_test, early_stopping_rounds)
 
     # num_epochs = 100
     # batch_size = 128
@@ -433,11 +504,11 @@ def main():
     batch_size = 64
     torch.manual_seed(0)
     # learning_rate = .1
-    learning_rates = [.005, .0035, .002, .001, .0009, .0008, .00065, .0005]
+    learning_rates = [.0008]
     accs = []
     name = '4'
     input_p = .2
-    ps = [.5, .4, .3, .2]
+    ps = [.5]
     for lr in learning_rates:
         for p in ps:
             print(f'Dropout rate: {p}')
