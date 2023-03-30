@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 import time
 import matplotlib.pyplot as plt
 from sklearn.utils import shuffle
+import xgboost.sklearn as xgb
 
 
 wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
@@ -73,14 +74,28 @@ def import_players():
 def import_matches(start_year):
     match_df = pd.read_parquet(f'{wd}/Data/output_df.parquet.gzip')
 
+    print(f'yo')
+    for i in range(1,34):
+        match_df = match_df.drop([f'p1_seed_{i}'], axis=1)
+        match_df = match_df.drop([f'p2_seed_{i}'], axis=1)
+
+    match_df = match_df.drop(['p1_seed_35', 'p2_seed_34', 'p2_seed_35'], axis=1)
+    print(f'yo')
+
     # match_df['tourney_date'] = match_df['tourney_date']
     # print(f'Match_df shape')
     # print(match_df.shape[0])
+
+
+    match_df['y_pred_xgboost'] = xgboost_inference(match_df, match_df[match_df.tourney_date <= pd.to_datetime(start_year, format='%Y')].count()/match_df.shape[0], 8)
+
+    match_df = match_df[match_df.ATP == 1]
+
     match_df = match_df[match_df.tourney_date >= pd.to_datetime(start_year, format='%Y')]
     # print(match_df.shape[0])
-    match_df = match_df[match_df.ATP == 1]
     # match_df = match_df[match_df.best_of_3 == 0]
     # print(match_df.shape[0])
+
 
     return match_df
 
@@ -199,7 +214,7 @@ class Net4(nn.Module):
     x = self.dropout(x)
 
     x = torch.relu(self.fc6(x))
-    x = self.dropout_input(x)
+    x = self.dropout(x)
 
     x = torch.relu(self.fc7(x))
     # x = self.dropout(x)
@@ -221,7 +236,7 @@ def load_model(name, model_type):
 def inference(match_df, model):
     df = match_df.copy()
     # print(df.head(20))
-    X = df.drop(['p1_seed', 'p1_ht', 'p1_age', 'p2_seed', 'p2_ht', 'p2_age', 'p1_rank',
+    X = df.drop(['p1_seed', 'p1_ht', 'p2_seed', 'p2_ht', 'p1_rank',
        'p1_rank_points', 'p2_rank', 'p2_rank_points', 'p1_home',
        'p2_home', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games','index','level_0','tourney_id','tourney_name','surface',
                           'draw_size',
@@ -250,7 +265,7 @@ def inference(match_df, model):
                           'p1_score',
                           'p2_score',
                           'p1_entry',
-                          'p2_entry','winner','winner_name','loser_name','winner_id','loser_id','PSW','PSL','ps_winner_odds','ps_loser_odds'],axis=1)
+                          'p2_entry','winner','winner_name','loser_name','winner_id','loser_id','PSW','PSL','ps_winner_odds','ps_loser_odds', 'y_pred_xgboost'],axis=1)
 
     sc = StandardScaler()
     # print(X['p1_time_oncourt_last_match'].head(10))
@@ -263,7 +278,70 @@ def inference(match_df, model):
     with torch.no_grad():
         y_pred = model(torch.tensor(X, dtype=torch.float32))
     df['y_pred'] = y_pred.detach().numpy()
+
+    # df['y_pred'] = (df['y_pred_xgboost'])
+    print(df.head(40))
     return df
+
+def xgboost_inference(df, train_percent, iterations):
+
+    print('yo')
+    X = df.drop(['p1_seed', 'p1_ht', 'p2_seed', 'p2_ht', 'p1_rank',
+       'p1_rank_points', 'p2_rank', 'p2_rank_points', 'p1_home',
+       'p2_home', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games','index','level_0','tourney_id','tourney_name','surface',
+                          'draw_size',
+                          'tourney_level',
+                          'tourney_date',
+                          'match_num',
+                          'p1_id',
+                          'p1_name',
+                          'p1_hand',
+                          # 'p1_ht',
+                          'p1_ioc',
+                          # 'p1_age',
+                          'p2_id',
+                          'p2_name',
+                          'p2_hand',
+                          # 'p2_ht',
+                          'p2_ioc',
+                          # 'p2_age',
+                          'score',
+                          'best_of',
+                          'round',
+                          'minutes',
+                          'tournament_search',
+                          'city',
+                          'country_code',
+                          'p1_score',
+                          'p2_score',
+                          'p1_entry',
+                          'p2_entry','winner'],axis=1)
+
+    model = xgb.XGBModel()
+
+    for i in range(iterations):
+        X_train, X_test = train_test_split(X, train_size=(train_percent+(1-train_percent)*(i/iterations)),
+                                                            shuffle=False, random_state=420)
+
+        if i == 0:
+            results = np.zeros_like(X_train.shape[0])
+
+
+        if i + 1 != iterations:
+            X_test, X_discard = train_test_split(X_test, train_size=(1) / (iterations - i),
+                                                                    shuffle=False, random_state=420)
+
+        # mask = X_test['ATP'] > 0
+        # X_test = X_test[mask]
+
+        model.load_model(f'xgboost/xgboost_iteration_{i+1}of{iterations}.json')
+        print(model.best_ntree_limit)
+
+        for pred in model.predict(X_test, ntree_limit=model.best_ntree_limit):
+            results.append(pred)
+
+    return results
+
 
 def fractional_kelly(match_df, bankroll, fraction):
     bankrolls = []
@@ -296,10 +374,8 @@ def fractional_kelly(match_df, bankroll, fraction):
             q = 1-p
             # print(q)
             b = (df.loc[i, f'{player}_decimal_odds'] - 1)
-            # print(f'{player} decimal odds: {df.loc[i, f"{player}_decimal_odds"]}')
-            # print(b)
+
             f = fraction * (p - (q/b))
-            # print(f'{player} fractional Kelly ratio: {f:.2f}')
 
             if f > 0:
                 count += 1
@@ -317,7 +393,6 @@ def fractional_kelly(match_df, bankroll, fraction):
         bankrolls.append(bankroll)
     print(f'% winning bets: {correct*100/count:.2f}%\n')
     return bankrolls, dates
-
 
 
 
@@ -365,9 +440,9 @@ def graphing(bankrolls, dates):
 
 
 def main():
-    start_year = 2022
-    start_date = pd.to_datetime('20220101',format='%Y%m%d')
-    end_year = 2023
+    start_year = 2019
+    start_date = pd.to_datetime('20190101',format='%Y%m%d')
+    end_year = 2019
     odds_df = import_odds(start_year, end_year, start_date)
     # print(odds_df.head(10))
     odds_df = clean_odds(odds_df)
@@ -382,11 +457,12 @@ def main():
 
     match_df = match_index(match_df, odds_df, player_df)
 
-    model_name = 'model_3layers_batch64lr0.001_0.68602'
-    model_type = Net4(input_shape=105, input_p=.3, p=.5)
+    model_name = 'model_4layers_batch64lr0.005_0.68346'
+    model_type = Net4(input_shape=121, input_p=.2, p=.2)
     model = load_model(model_name, model_type)
 
-    match_df = inference(match_df, model)
+    boost_iterations = 6
+    match_df = inference(match_df, model, boost_iterations)
     match_df = betting_calc(match_df)
     bankroll = 1
     fraction = .03

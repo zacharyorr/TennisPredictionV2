@@ -16,6 +16,9 @@ import winsound
 from tqdm import tqdm
 from geotext import GeoText
 import geograpy
+import openai
+import math
+from io import StringIO
 
 wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
 os.chdir(wd)
@@ -270,28 +273,73 @@ def pull_cities(tourney_list):
     df.to_csv(f'{wd}/Data/country_mapping.csv')
 
 
-def get_tournaments(match_df):
+def get_tournaments(match_df, request_size, country_df_exists):
     # Precursor to pulling cities method, molds the data according to the needs of the city parser and wikipedia parser
-    match_df['tournament_search'] = match_df['tourney_name'] + ' tennis tournament ' + match_df['tourney_date'].astype(
-        str).str[:4]
-    tourney_list = match_df['tournament_search'].unique()
-    no_year_tourney_list = match_df['tourney_name'].unique()
-    return tourney_list, no_year_tourney_list
+    # match_df['tournament_search'] = match_df['tourney_name'] + ' tennis tournament ' + match_df['tourney_date'].astype(
+    #     str).str[:4]
+    # tourney_list = match_df['tournament_search'].unique()
+    no_year_tourney_list = match_df[~match_df['tourney_name'].str.contains("Davis Cup")]['tourney_name'].unique()
+    # print(no_year_tourney_list[:100])
+    # no_year_tourney_list = no_year_tourney_list[:300]
+    gpt_tournament_search(no_year_tourney_list, request_size, country_df_exists)
+    return no_year_tourney_list
+
+def gpt_tournament_search(tourney_list, request_size, country_df_exists):
+
+    print(f'Calculating tournament country codes...')
+    full_list = []
+    openai.api_key = open("key.txt", "r").read().strip("\n")
+
+    if country_df_exists == 1:
+        country_df = pd.read_csv(f'{wd}/Data/country_mapping.csv',
+                                 index_col=0,
+                                 header=0,
+                                 )
+        existing_tournies = country_df['tourney_name'].unique()
+        tourney_list = list(set(tourney_list).difference(existing_tournies))
+        print(tourney_list)
 
 
-def attach_tournaments(match_df, tourney_list):
+    if len(tourney_list) > 0:
+        for i in range(math.ceil(len(tourney_list)/request_size,)):
+
+            message_history = [{"role": "user",
+                                "content": f"You are TennisGPT. You will be given a list of tennis tournaments. Your output will be a csv file. The first column of the table will be the name of each given tennis tournament. The second column will be the 3 letter country code of the associated tournament; if the provided name of the tennis tournament contains a city, state, or country, assume that that tennis tournament was played in that location. The third column will be the city that the associated tournament was played in. The output will be only the csv file, no text beforehand. If the tennis tournament name is not a valid tennis tournament and does not contain the name of a city, state, or country, then include it as a row in the csv file, but leave the country code and city blank, writing only an empty string. Do not include a header row and only include one line break between each row. Remember, there should always be 2, and only 2 commas in each row. Example output rows are as follows: USA F39,USA,\nTour Finals,,\nWimbledon,GBR,Wimbledon\nNice CH,FRA,Nice\nYugoslavia F2,Yugoslavia,\nIran Masters 1,Iran, If you understand, say OK."},
+                               {"role": "assistant", "content": f"OK"}]
+
+            message_history.append({"role": "user", "content": f"{tourney_list[i*request_size:(i+1)*request_size]}"})
+
+            completion = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=message_history
+            )
+
+            reply_content = completion.choices[0].message.content  # .replace('```python', '<pre>').replace('```', '</pre>')
+            full_list.append(reply_content)
+
+            print(f'{i+1} of {(math.ceil(len(tourney_list)/request_size,))+1} loops complete')
+
+        data_buffer = StringIO('\n'.join(full_list))
+        df = pd.read_csv(data_buffer, header=None, names=['tourney_name','country_code','city_name','filler'])
+        df = df.reset_index(drop=True)
+        country_df = country_df.drop(['index'], axis=1)
+        df = pd.concat([country_df, df], ignore_index=True).reset_index(drop=True)
+        df.to_csv(f'{wd}/Data/country_mapping.csv')
+
+
+def attach_tournaments(match_df):
     print('\nAttaching tournament names...')
     # Puts the calculated countries into the match dataframe. Starts by reading the exported CSV from pull_cities
     country_df = pd.read_csv(f'{wd}/Data/country_mapping.csv',
                              index_col=0,
                              header=0,
                              )
-    # Undoes the string manipulation we performed earlier, for indexing
-    country_df['original_tourney_name'] = tourney_list.astype(str)
-    # Drops unnecessary columns
-    country_df = country_df.drop(['tourney', 'country'], axis=1)
+
+    country_df = country_df.drop_duplicates(subset='tourney_name',keep='first')
+    country_df = country_df.drop('filler', axis=1)
+
     # Left outer join to match the appropriate country codes
-    result_df = match_df.join(country_df.set_index('original_tourney_name'), on='tourney_name', validate='m:1')
+    result_df = match_df.join(country_df.set_index('tourney_name'), on='tourney_name', validate='m:1')
     return result_df
 
 
@@ -1536,6 +1584,8 @@ def main():
 
     # combining the 3 dataframes for later analysis
     match_df = combine_dfs(atp_df, futures_df, qual_challenger_df)
+    # match_df = match_df[700000:]
+
 
     # removing walkovers and retirements.
     match_df = remove_walkovers(match_df)
@@ -1546,7 +1596,9 @@ def main():
     match_df = remove_features(match_df)
 
     # pulls tournament names, removes the year, to create unique key for every tournament (non-year dependent)
-    tourney_list, no_year_tourney_list = get_tournaments(match_df)
+    request_size = 200
+    country_df_exists = 1
+    no_year_tourney_list = get_tournaments(match_df, request_size, country_df_exists)
 
     # ACTIVATE THE BELOW FUNCTION TO RESET CITIES
     # tourney_list = pull_cities(no_year_tourney_list)
@@ -1555,7 +1607,8 @@ def main():
     # match_df = get_location(match_df, tourney_list, tourney_source)
 
     # attaches tournaments to their appropriate countries, to compute home court advantage
-    match_df = attach_tournaments(match_df, no_year_tourney_list)
+    match_df = attach_tournaments(match_df)
+
 
     # change to one-hot encoding of bo5, p1/p2 hand,
     match_df = one_hot_bof5(match_df)
@@ -1564,13 +1617,13 @@ def main():
     # match_df = match_df[700000:]
 
     # pull rankings and append to dataframe
-    match_df = set_h2h(match_df, rankings_df)
+    # match_df = set_h2h(match_df, rankings_df)
 
     # calculates player scores to input into Glicko-2 ranking system
     winner_weight = .6
     sets_weight = .2
     games_weight = .2
-    match_df = winner_points(match_df, winner_weight, sets_weight, games_weight)
+    # match_df = winner_points(match_df, winner_weight, sets_weight, games_weight)
 
 
     # using the following input parameters, calculates the Glicko-2 ratings of players in dataset
@@ -1580,29 +1633,25 @@ def main():
     rating_period = 40
     show_rankings = 100
     rd_cutoff = 80
-    match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
+    # match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
 
 
     # adds date features (year, sin(day), cos(day)) to the dataframe
-    match_df = date_features(match_df)
+    # match_df = date_features(match_df)
 
     # consolidates all tournament levels into 'ATP', 'C', and 'S'
-    match_df = tourney_level(match_df)
+    # match_df = tourney_level(match_df)
 
     # calculates a rolling sum of p1/p2 wins and losses at all levels in the following time periods
     time_periods = ['l6m', 'l1y', 'career']
     rolling_windows = ['182d', '365d', '30000d']
-    match_df = player_wins(match_df, time_periods, rolling_windows)
-
-    # match_df = match_df[match_df['surface'] == 'Hard']
-    # match_df = match_df[match_df.tourney_level_consolidated == 'ATP']
-    # match_df = match_df[match_df.tourney_name == 'Dubai']
+    # match_df = player_wins(match_df, time_periods, rolling_windows)
 
 
     # calculates a rolling sum of p1/p2 wins and losses at their current tournament in the following time periods
     time_periods = ['l6m', 'l3y', 'career']
     rolling_windows = ['182d', '1095d', '30000d']
-    match_df = tourney_history2(match_df, time_periods, rolling_windows)
+    # match_df = tourney_history2(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of time on court for all players in the following time periods.
     # fills missing match time data with averages; rounds match_games to games_base and rounds year to year_base
@@ -1610,13 +1659,13 @@ def main():
     year_base = 10
     time_periods = ['last_match', 'last_3_matches', 'last_2_weeks']
     rolling_windows = [1, 3, '14d']
-    match_df = time_on_court(match_df, games_base, year_base, time_periods, rolling_windows)
+    # match_df = time_on_court(match_df, games_base, year_base, time_periods, rolling_windows)
 
     # adds momentum in the form of win and loss streak
-    match_df = momentum(match_df)
+    # match_df = momentum(match_df)
 
     # adds one-hot variables for surface type
-    match_df = surfaces(match_df)
+    # match_df = surfaces(match_df)
 
     # using the following input parameters, calculates the Glicko-2 ratings of players in dataset on match surface
     initial_rating = 2300
@@ -1628,32 +1677,33 @@ def main():
     Carpet_rating_period = 360
     show_rankings = 20
     rd_cutoff = 100
-    match_df = gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff)
+    # match_df = gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff)
 
     # calculates player strength on surface (wins and losses)
-    match_df = surface_wins(match_df)
+    # match_df = surface_wins(match_df)
 
     # calculates player ages
-    match_df = player_age(match_df)
+    # match_df = player_age(match_df)
 
     # calculates the length of time a player has been inactive
-    match_df = player_inactive_period(match_df)
+    # match_df = player_inactive_period(match_df)
 
     # creates dummy variables for the current round of the match
-    match_df = round_dummies(match_df)
+    # match_df = round_dummies(match_df)
 
     # creates dummy variables for each player's seed
-    match_df = seed_dummies(match_df)
+    # match_df = seed_dummies(match_df)
 
     # splits the dataframe, for half of the dataset, makes p1 the winner, and for the other half, makes p2 the winner
-    match_df = split_df_2(match_df)
+    # match_df = split_df_2(match_df)
 
     # saves the dataframe as a parquet, outputs necessary features to the neural network
-    to_parquet(match_df)
+    # to_parquet(match_df)
 
     # print(match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)].head(100))
     # print(match_df[(((match_df.p1_id == 104259) | (match_df.p2_id == 104259)) & (match_df.tourney_name == 'Dubai'))].head(100))
-    print(match_df[(((match_df.p1_id == 104925) | (match_df.p2_id == 104925)) & (match_df.tourney_name == 'Dubai'))].head(200))
+    # print(match_df[(((match_df.p1_id == 104925) | (match_df.p2_id == 104925)) & (match_df.tourney_name == 'Dubai'))].head(200))
+    print(match_df.tail(50))
 
     # sound to notify on code completion
     winsound.Beep(500, 100)

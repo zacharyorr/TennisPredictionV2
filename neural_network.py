@@ -9,7 +9,8 @@ from torch.utils.data import Dataset, DataLoader
 import time
 import matplotlib.pyplot as plt
 import winsound
-import xgboost as xgb
+# import xgboost as xgb
+import xgboost.sklearn as xgb
 from sklearn.metrics import accuracy_score
 
 
@@ -151,7 +152,7 @@ class Net4(nn.Module):
     x = self.dropout(x)
 
     x = torch.relu(self.fc6(x))
-    x = self.dropout_input(x)
+    x = self.dropout(x)
 
     x = torch.relu(self.fc7(x))
     # x = self.dropout(x)
@@ -159,13 +160,29 @@ class Net4(nn.Module):
     x = torch.sigmoid(self.fc8(x))
     return x
 
+class Net5(nn.Module):
+  def __init__(self, input_shape, input_p, p):
+      super(Net5, self).__init__()
+      self.fc1 = nn.Linear(input_shape, 512)
+
+      self.fc8 = nn.Linear(512, 1)
+      self.dropout_input = nn.Dropout(input_p)
+      self.dropout = nn.Dropout(p)
+
+  def forward(self, x):
+      x = torch.relu(self.fc1(x))
+      # x = self.dropout(x)
+
+      x = torch.sigmoid(self.fc8(x))
+      return x
+
 
 
 class Net1(nn.Module):
   def __init__(self,input_shape):
     super(Net1,self).__init__()
-    self.fc1 = nn.Linear(input_shape, 128)
-    self.fc8 = nn.Linear(128, 1)
+    self.fc1 = nn.Linear(input_shape, 512)
+    self.fc8 = nn.Linear(512, 1)
 
   def forward(self,x):
     x = torch.relu(self.fc1(x))
@@ -185,9 +202,9 @@ def baseline_accuracy(df):
 def import_data():
 
     # import data
-    # match_df = pd.read_csv(f'{wd}/Data/output_df.csv',index_col=0, header=0, parse_dates=['tourney_date'])
     match_df = pd.read_parquet(f'{wd}/Data/output_df.parquet.gzip')
     match_df = match_df.set_index('dt_index', drop=True).sort_index()
+    print(match_df.head(5))
     return match_df
 
 def feature_extraction(match_df, test_year, test_end):
@@ -205,7 +222,6 @@ def feature_extraction(match_df, test_year, test_end):
     match_df = match_df.drop(['index','level_0','tourney_id','tourney_name','surface',
                               'draw_size',
                               'tourney_level',
-                              'tourney_date',
                               'match_num',
                               'p1_id',
                               'p1_name',
@@ -232,18 +248,20 @@ def feature_extraction(match_df, test_year, test_end):
                               'p2_entry'
                               ],axis=1)
 
-    match_df = match_df.drop(['p1_seed', 'p1_ht', 'p1_age', 'p2_seed', 'p2_ht', 'p2_age', 'p1_rank',
-           'p1_rank_points', 'p2_rank', 'p2_rank_points', 'p1_home',
-           'p2_home', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games'], axis=1)
+    match_df = match_df.drop(['p1_seed', 'p1_ht', 'p2_seed', 'p2_ht', 'p1_rank',
+           'p1_rank_points', 'p2_rank', 'p2_rank_points', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games'], axis=1)
 
     # print(match_df[match_df.isna().any(axis=1)])
 
 
     # match_df = match_df.drop(['p1_time_oncourt_last_match','p1_time_oncourt_last_3_matches','p1_time_oncourt_last_2_weeks',
     #                           'p2_time_oncourt_last_match','p2_time_oncourt_last_3_matches','p2_time_oncourt_last_2_weeks'],axis=1)
-    #
-    # match_df = match_df.drop(['p1_glicko_rating','p1_glicko_deviation','p1_glicko_volatility',
-    #                           'p2_glicko_rating','p2_glicko_deviation','p2_glicko_volatility'],axis=1)
+
+    # match_df = match_df.drop(['p1_glicko_rating','p1_glicko_deviation',
+    #                           'p2_glicko_rating','p2_glicko_deviation'],axis=1)
+
+    # match_df = match_df.drop(['p1_glicko_volatility','p2_glicko_volatility'],axis=1)
+
 
     # match_df = match_df.drop(['p1_w_S_l6m', 'p1_w_S_l1y', 'p1_w_S_career',
     #        'p1_l_S_l6m', 'p1_l_S_l1y', 'p1_l_S_career', 'p1_w_C_l6m', 'p1_w_C_l1y',
@@ -256,43 +274,40 @@ def feature_extraction(match_df, test_year, test_end):
     #        'p2_l_ATP_l6m', 'p2_l_ATP_l1y', 'p2_l_ATP_career'],axis=1)
 
     # match_df = match_df.drop(['p1_h2h_wins', 'p2_h2h_wins'],axis=1)
-    #
-    # match_df = match_df.drop(['p1_w_tourney_l1y',
-    #        'p2_l_tourney_l1y', 'p1_w_tourney_l3y', 'p2_l_tourney_l3y',
-    #        'p1_w_tourney_career', 'p2_l_tourney_career', 'p1_l_tourney_l1y',
-    #        'p1_l_tourney_l3y', 'p1_l_tourney_career', 'p2_w_tourney_l1y',
+
+    # match_df = match_df.drop(['p1_w_tourney_l6m',
+    #        'p2_l_tourney_l6m', 'p1_w_tourney_l3y', 'p2_l_tourney_l3y',
+    #        'p1_w_tourney_career', 'p2_l_tourney_career', 'p1_l_tourney_l6m',
+    #        'p1_l_tourney_l3y', 'p1_l_tourney_career', 'p2_w_tourney_l6m',
     #        'p2_w_tourney_l3y', 'p2_w_tourney_career'],axis=1)
 
     # match_df = match_df.drop(['p1_win_streak', 'p1_loss_streak', 'p2_win_streak',
-    #        'p2_loss_streak', 'Carpet', 'Clay', 'Grass', 'Hard', 'p1_grass_wins',
+    #        'p2_loss_streak'], axis=1)
+
+    # match_df = match_df.drop(['Carpet', 'Clay', 'Grass', 'Hard', 'p1_grass_wins',
     #        'p1_grass_losses', 'p1_hard_wins', 'p1_hard_losses', 'p1_clay_wins',
     #        'p1_clay_losses', 'p1_carpet_wins', 'p1_carpet_losses', 'p2_grass_wins',
     #        'p2_grass_losses', 'p2_hard_wins', 'p2_hard_losses', 'p2_clay_wins',
     #        'p2_clay_losses', 'p2_carpet_wins', 'p2_carpet_losses'], axis=1)
 
-    # match_df = match_df.drop(['best_of_3', 'p1_left_handed', 'p1_right_handed', 'p2_left_handed', 'p2_right_handed', 'p1_h2h_wins', 'p2_h2h_wins', 'day_sin',
-    #    'day_cos', 'ATP', 'C', 'S', 'p1_days_inactive', 'p2_days_inactive'], axis=1)
+    # match_df = match_df.drop(['best_of_3', 'p1_left_handed', 'p1_right_handed', 'p2_left_handed', 'p2_right_handed', 'day_sin',
+    #    'day_cos', 'C', 'S', 'p1_days_inactive', 'p2_days_inactive'], axis=1)
 
     # match_df = match_df.drop(['p1_glicko_surface_rating',
     #    'p2_glicko_surface_rating', 'p1_glicko_surface_deviation',
     #    'p2_glicko_surface_deviation', 'p1_glicko_surface_volatility',
     #    'p2_glicko_surface_volatility'], axis=1)
 
-    # print(match_df.shape[1])
 
-    # for i in range(1,34):
-    #     match_df = match_df.drop([f'p1_seed_{i}'], axis=1)
-    #     match_df = match_df.drop([f'p2_seed_{i}'], axis=1)
-    #
-    # match_df = match_df.drop(['p1_seed_35', 'p2_seed_34', 'p2_seed_35'], axis=1)
+
+    for i in range(1,34):
+        match_df = match_df.drop([f'p1_seed_{i}'], axis=1)
+        match_df = match_df.drop([f'p2_seed_{i}'], axis=1)
+
+    match_df = match_df.drop(['p1_seed_35', 'p2_seed_34', 'p2_seed_35'], axis=1)
     #
     # match_df = match_df.drop(['F', 'SF', 'QF', 'R128', 'R64', 'R32', 'R16', 'RR', 'BR', 'ER', 'Q1', 'Q2', 'Q3', 'Q4'], axis=1)
 
-
-
-
-    print(match_df.columns.tolist())
-    print(match_df.shape[1])
 
     return match_df, train_size
 
@@ -304,7 +319,6 @@ def train_test_split_df(match_df, train_percent, ATP_only):
     X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=train_percent,shuffle=False, random_state=420)
     baseline_train, baseline_test = train_test_split(baseline_x, train_size=train_percent, shuffle=False, random_state=420)
 
-    print(X_test.shape[0])
 
     if ATP_only == 1:
         mask = X_test['ATP'] > 0
@@ -312,13 +326,12 @@ def train_test_split_df(match_df, train_percent, ATP_only):
         baseline_test = baseline_test[mask]
         y_test = y_test[mask]
 
+    dtrain_reg = X
+    dtest_reg = y
 
-    print(X_test.shape[0])
-
-    dtrain_reg = xgb.DMatrix(X_train, y_train)
-    dtest_reg = xgb.DMatrix(X_test, y_test)
-
-
+    X = X.drop(['tourney_date'], axis=1)
+    X_train = X_train.drop(['tourney_date'], axis=1)
+    X_test = X_test.drop(['tourney_date'], axis=1)
     sc = StandardScaler()
     X_train = sc.fit_transform(X_train)
     X_test = sc.transform(X_test)
@@ -327,13 +340,13 @@ def train_test_split_df(match_df, train_percent, ATP_only):
     return X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, dtrain_reg, dtest_reg
 
 
-def run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, learning_rate, model, name):
+def run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, learning_rate, model, name, m, n):
     print(f'Learning rate: {learning_rate}')
     best_acc = 0
     trainset = dataset(X_train,y_train)
     trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=False)
 
-    optimizer = torch.optim.AdamW(model.parameters(),lr=learning_rate)
+    optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate, momentum=m, nesterov=n)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=.8)
     loss_fn = nn.BCELoss()
     early_stopper = EarlyStopper(patience=7, minima_patience=5, min_delta=.001)
@@ -432,58 +445,90 @@ def run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y
 
 # def lin_reg(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y):
 
-def xgboost(train, test, params, n, y_test, early_stopping):
+def xgboost(X, y, params, n, y_test_total, early_stopping, train_percent, iterations, ATP_only, test_cutoff, max_date, max_cutoff):
 
-    evals = [(train, "train"), (test, "validation")]
+    preds = []
 
-    # print(early_stopping)
+    test_end = min(max_date, pd.to_datetime(max_cutoff))
+    print(test_end)
 
-    model = xgb.train(
-        params = params,
-        dtrain=train,
-        num_boost_round=n,
-        evals=evals,
-        verbose_eval=50,
-        early_stopping_rounds=early_stopping
-    )
-    preds = model.predict(test).round()
+    num_months = 12 * (test_end.year - pd.to_datetime(test_cutoff).year) + test_end.month - pd.to_datetime(test_cutoff).month + 1
+    # print(f'num months: {num_months}')
+
+    cutoff_date = pd.to_datetime(test_cutoff)
+
+    for i in range(num_months):
+
+        if iterations == 'm':
+            next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(31, 'D')).replace(day=1)
+        if iterations == 'w':
+            next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(7, 'D')).replace(day=1)
+        if iterations == 'y':
+            next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(1, 'Y')).replace(day=1)
+
+
+
+        print(f'Cutoff date {cutoff_date}')
+        print(f'Cutoff date {next_cutoff_date}')
+
+
+        X_train = X[X['tourney_date'] < cutoff_date]
+        y_train = y[X['tourney_date'] < cutoff_date]
+
+        X_test = X[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
+        y_test = y[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
+
+        X_test = X_test.drop(['tourney_date'], axis=1)
+        X_train = X_train.drop(['tourney_date'], axis=1)
+        if ATP_only == 1:
+            mask = X_test['ATP'] > 0
+            X_test = X_test[mask]
+            y_test = y_test[mask]
+
+        train = xgb.DMatrix(X_train, y_train)
+        test = xgb.DMatrix(X_test, y_test)
+
+        evals = [(train, "train"), (test, "validation")]
+
+        if X_test.shape[0] > 0:
+            model = xgb.train(
+                params = params,
+                dtrain=train,
+                num_boost_round=n,
+                evals=evals,
+                verbose_eval=False,
+                early_stopping_rounds=early_stopping
+            )
+
+            model.save_model(f'xgboost/xgboost_iteration_{cutoff_date.year}{cutoff_date.month}_{next_cutoff_date.year}{next_cutoff_date.month}.json')
+            for pred in model.predict(test, ntree_limit=model.best_ntree_limit).round():
+                preds.append(pred)
+            # print(len(preds))
+
+        cutoff_date = next_cutoff_date
 
     feature_scores = (model.get_score(importance_type='gain'))
-    # print(feature_scores)
     importances = pd.DataFrame.from_dict(feature_scores, orient='index')
-    # print(importances)
     importances = importances.rename(columns={0: 'importance'})
     importances = importances.sort_values(by=['importance'], ascending=False)
-    print(importances.head(20))
+    # print(importances)
 
-    acc = accuracy_score(y_test, preds)
+
+    acc = accuracy_score(y[(X['tourney_date'] >= pd.to_datetime(test_cutoff)) & (X['ATP'] == 1)], preds)
 
     print(f'Accuracy of XGBoost: {acc:.5f}')
 
-    results = xgb.cv(
-
-        params, train,
-
-        num_boost_round=n,
-
-        nfold=5,
-
-        early_stopping_rounds=20
-
-    )
-
-    print(results.head())
-    best_loss = results['test-logloss-mean'].min()
-    print(f'5f-cv loss: {best_loss:.5f}')
 
 
 def main():
     match_df = import_data()
 
-    test_cutoff = '2022-01-01'
-    test_end = '2023-01-01'
+    test_cutoff = '2022-06-01'
+    test_end = '2022-07-01'
+    max_date = match_df['tourney_date'].max()
+    print(max_date)
     match_df, train_percent = feature_extraction(match_df, test_cutoff, test_end)
-    # match_df = match_df[790000:]
+    # match_df = match_df[650000:]
     # print(match_df.tail(100))
 
     ATP_only = 1
@@ -492,7 +537,8 @@ def main():
     params = {"objective": "binary:logistic", "tree_method": "gpu_hist"}
     n=1000
     early_stopping_rounds = 50
-    xgboost(dtrain_reg, dtest_reg, params, n, y_test, early_stopping_rounds)
+    iterations = 'months'
+    # xgboost(dtrain_reg, dtest_reg, params, n, y_test, early_stopping_rounds, train_percent, iterations, ATP_only, test_cutoff, max_date, test_end)
 
     # num_epochs = 100
     # batch_size = 128
@@ -504,16 +550,18 @@ def main():
     batch_size = 64
     torch.manual_seed(0)
     # learning_rate = .1
-    learning_rates = [.0008]
+    learning_rates = [.005]
     accs = []
-    name = '4'
+    name = '5'
     input_p = .2
-    ps = [.5]
+    ps = [.2, .1, .2, .3, .4, .5, .6, .7]
+    momentum = .9
+    nesterov = True
     for lr in learning_rates:
         for p in ps:
             print(f'Dropout rate: {p}')
             nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=p)
-            best_acc = run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, lr, nn_model, name)
+            best_acc = run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, lr, nn_model, name, momentum, nesterov)
             accs.append(best_acc)
     winsound.Beep(500, 100)
     print(learning_rates)
