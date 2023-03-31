@@ -14,7 +14,7 @@ import xgboost.sklearn as xgb
 from sklearn.metrics import accuracy_score
 
 
-wd = 'C:/Users/zacha/PycharmProjects/TennisPredictionV2'
+wd = 'C:/Users/60864/PycharmProjects/TennisPredictionV2'
 os.chdir(wd)
 pd.options.display.max_columns = None
 pd.options.display.width = None
@@ -96,7 +96,6 @@ class Net2(nn.Module):
     x = torch.sigmoid(self.fc6(x))
     return x
 
-
 class Net3(nn.Module):
   def __init__(self,input_shape):
     super(Net3,self).__init__()
@@ -119,7 +118,6 @@ class Net3(nn.Module):
     x = torch.relu(self.fc7(x))
     x = torch.sigmoid(self.fc8(x))
     return x
-
 
 class Net4(nn.Module):
   def __init__(self,input_shape, input_p, p):
@@ -193,10 +191,6 @@ def baseline_accuracy(df):
     df = df.copy(deep=True)
     df['baseline_prediction'] = ((df['p1_rank'] - df['p2_rank']) > 0).astype(int)
     return df
-
-
-
-
 
 
 def import_data():
@@ -340,7 +334,78 @@ def train_test_split_df(match_df, train_percent, ATP_only):
     return X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, dtrain_reg, dtest_reg
 
 
-def run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, learning_rate, model, name, m, n):
+
+def train_test_split_df_months(match_df, train_percent, ATP_only, max_date, max_cutoff, test_cutoff, iterations, num_epochs, batch_size, lr, nn_model, name, momentum, nesterov):
+    X = match_df.copy(deep=True).drop(['winner','baseline_prediction'],axis=1).reset_index(drop=True)
+    y = match_df.copy(deep=True)['winner'].reset_index(drop=True)
+    baseline_x = match_df.copy(deep=True).loc[:, ['baseline_prediction','year']].reset_index(drop=True)
+
+    combined_preds = []
+    accs = []
+
+    test_end = min(max_date, pd.to_datetime(max_cutoff))
+    print(test_end)
+
+    num_months = 12 * (test_end.year - pd.to_datetime(test_cutoff).year) + test_end.month - pd.to_datetime(test_cutoff).month + 1
+    # print(f'num months: {num_months}')
+
+    cutoff_date = pd.to_datetime(test_cutoff)
+
+    for i in range(num_months):
+
+        if iterations == 'months':
+            next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(31, 'D')).replace(day=1)
+        if iterations == 'weeks':
+            next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(7, 'D')).replace(day=1)
+        if iterations == 'years':
+            next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(1, 'Y')).replace(day=1)
+
+        # print(f'Cutoff date {cutoff_date}')
+        # print(f'Cutoff date {next_cutoff_date}')
+
+
+        X_train = X[X['tourney_date'] < cutoff_date]
+        y_train = y[X['tourney_date'] < cutoff_date]
+
+        X_test = X[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
+        y_test = y[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
+        baseline_test = baseline_x[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
+
+        X_test = X_test.drop(['tourney_date'], axis=1)
+        X_train = X_train.drop(['tourney_date'], axis=1)
+
+
+
+        if ATP_only == 1:
+            mask = X_test['ATP'] > 0
+            X_test = X_test[mask]
+            baseline_test = baseline_test[mask]
+            y_test = y_test[mask]
+
+
+        # X_train = X_train.drop(['tourney_date'], axis=1)
+        # X_test = X_test.drop(['tourney_date'], axis=1)
+        sc = StandardScaler()
+        X_train = sc.fit_transform(X_train)
+        X_test = sc.transform(X_test)
+
+        best_acc, preds = run_nn(X_train, X_test, y_train, y_test, baseline_test, X, y, num_epochs, batch_size, lr, nn_model, name, momentum, nesterov, cutoff_date, next_cutoff_date)
+
+        accs.append[best_acc]
+        for pred in preds:
+            combined_preds.append(pred)
+
+        cutoff_date = next_cutoff_date
+
+    acc = accuracy_score(y[(X['tourney_date'] >= pd.to_datetime(test_cutoff)) & (X['ATP'] == 1)], combined_preds)
+
+    print(f'Accuracy of monthly neural network: {acc:.5f}')
+
+
+
+    # return X_train, X_test, y_train, y_test, X, y
+
+def run_nn_months(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, learning_rate, model, name, m, n):
     print(f'Learning rate: {learning_rate}')
     best_acc = 0
     trainset = dataset(X_train,y_train)
@@ -443,7 +508,114 @@ def run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y
     return best_acc
 
 
-# def lin_reg(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y):
+
+def run_nn(X_train, X_test, y_train, y_test, baseline_test, X, y, num_epochs, batch_size, learning_rate, model, name, m, n, period_start, period_end):
+    print(f'Learning rate: {learning_rate}')
+    best_acc = 0
+    trainset = dataset(X_train,y_train)
+    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=False)
+
+    optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate, momentum=m, nesterov=n)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=.8)
+    loss_fn = nn.BCELoss()
+    early_stopper = EarlyStopper(patience=7, minima_patience=5, min_delta=.001)
+
+    losses = []
+    train_accur = []
+    test_accur = []
+
+    start_time = time.time()
+
+    baseline_accuracy = (baseline_test['baseline_prediction'] == y_test).mean()
+    print(f'Baseline accuracy: {baseline_accuracy}')
+
+    for i in range(num_epochs):
+        train_correct = 0
+        train_size = 0
+
+        for j, (X_train, y_train) in enumerate(trainloader):
+            # calculate output
+            output = model(X_train)
+            # print(output)
+
+            # calculate loss
+            loss = loss_fn(output, y_train.reshape(-1, 1))
+
+            # backprop
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            model.eval()
+            with torch.no_grad():
+                predicted = model(torch.tensor(X_train, dtype=torch.float32))
+                train_correct += (predicted.reshape(-1).detach().numpy().round() == y_train.detach().numpy()).sum()
+                train_size += len(y_train.detach().numpy())
+            model.train()
+
+        # accuracy
+        train_acc = train_correct/train_size
+        model.eval()
+        with torch.no_grad():
+            predicted = model(torch.tensor(X_test, dtype=torch.float32))
+            test_acc = (predicted.reshape(-1).detach().numpy().round() == y_test).mean()
+            if test_acc > best_acc:
+                best_acc = test_acc
+                best_model = model
+                best_model_index = i
+
+
+        model.train()
+        scheduler.step()
+
+
+        losses.append(loss)
+        train_accur.append(train_acc)
+        test_accur.append(test_acc)
+        print("epoch {}\tloss : {}\t train accuracy : {}\t test accuracy : {}".format((i+1), loss, train_acc, test_acc))
+        print(f'Time elapsed: {time.time()-start_time}')
+        print(f'Estimated time remaining: {((time.time() - start_time) * (num_epochs - i+1) / (i+1)):.2f} seconds')
+
+        if early_stopper.early_stop(test_acc):
+            print(f'Early stopping after {i} epochs...')
+            break
+        if early_stopper.local_min(train_acc):
+            print(f'Local minima... Early stopping after {i} epochs...')
+            break
+
+    fig, ax1 = plt.subplots()
+
+    color = 'tab:red'
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Training Loss', color=color)
+    ax1.plot([tensor.item() for tensor in losses], color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    ax2 = ax1.twinx()
+
+    color = 'tab:blue'
+    ax2.set_ylabel('Train Accuracy', color=color)
+    ax2.plot(train_accur, color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    color = 'tab:green'
+    ax2.set_ylabel('Accuracy', color=color)
+    ax2.plot(test_accur, color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    fig.tight_layout()
+    print(f'Saving loss figure to: {wd}/images/model_2_26_batch{batch_size}lr{learning_rate}_{test_accur[best_model_index]:.5f}.png')
+    fig.savefig(f'{wd}/images/model_2_26_batch{batch_size}lr{learning_rate}_{test_accur[best_model_index]:.5f}.png')
+    plt.clf()
+
+    print(f'Saving model to : {wd}/models/model_{period_start.year}{period_start.month}_{period_end.year}{period_end.month}.pth')
+    torch.save(best_model.state_dict(), f'{wd}/models/model_{period_start.year}{period_start.month}_{period_end.year}{period_end.month}.pth')
+    model.eval()
+    with torch.no_grad():
+        predicted = model(torch.tensor(X_test, dtype=torch.float32))
+        preds = (predicted.reshape(-1).detach().numpy().round() == y_test)
+
+    return best_acc, preds
+
 
 def xgboost(X, y, params, n, y_test_total, early_stopping, train_percent, iterations, ATP_only, test_cutoff, max_date, max_cutoff):
 
@@ -466,10 +638,8 @@ def xgboost(X, y, params, n, y_test_total, early_stopping, train_percent, iterat
         if iterations == 'y':
             next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(1, 'Y')).replace(day=1)
 
-
-
-        print(f'Cutoff date {cutoff_date}')
-        print(f'Cutoff date {next_cutoff_date}')
+        # print(f'Cutoff date {cutoff_date}')
+        # print(f'Cutoff date {next_cutoff_date}')
 
 
         X_train = X[X['tourney_date'] < cutoff_date]
@@ -540,12 +710,6 @@ def main():
     iterations = 'months'
     # xgboost(dtrain_reg, dtest_reg, params, n, y_test, early_stopping_rounds, train_percent, iterations, ATP_only, test_cutoff, max_date, test_end)
 
-    # num_epochs = 100
-    # batch_size = 128
-    # learning_rate = .001
-    # nn_model = Net3(input_shape=X.shape[1])
-    # run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, learning_rate, nn_model)
-
     num_epochs = 100
     batch_size = 64
     torch.manual_seed(0)
@@ -557,11 +721,18 @@ def main():
     ps = [.2, .1, .2, .3, .4, .5, .6, .7]
     momentum = .9
     nesterov = True
+    nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=ps[0])
+
+    if iterations == 'months':
+        train_test_split_df_months(match_df, train_percent, ATP_only, max_date, test_end, test_cutoff, iterations, num_epochs, batch_size, learning_rates[0], nn_model, name, momentum, nesterov)
+
+
+
     for lr in learning_rates:
         for p in ps:
             print(f'Dropout rate: {p}')
             nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=p)
-            best_acc = run_nn(X_train, X_test, y_train, y_test, baseline_train, baseline_test, X, y, num_epochs, batch_size, lr, nn_model, name, momentum, nesterov)
+            best_acc = run_nn(X_train, X_test, y_train, y_test, baseline_test, X, y, num_epochs, batch_size, lr, nn_model, name, momentum, nesterov)
             accs.append(best_acc)
     winsound.Beep(500, 100)
     print(learning_rates)

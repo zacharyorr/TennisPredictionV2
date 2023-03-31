@@ -354,7 +354,7 @@ def fractional_kelly(match_df, bankroll, fraction):
         # if i < 200:
         # if df.loc
         print(f'Bet number {i+1}')
-        print(f'{df.loc[i, "tourney_name"]}, {df.loc[i, "year"]}, {df.loc[i, "round"]}')
+        x = print(f'{df.loc[i, "tourney_name"]}, {df.loc[i, "year"]}, {df.loc[i, "round"]}')
         print(f'Player 1: {df.loc[i, "p1_name"]}')
         print(f'Player 2: {df.loc[i, "p2_name"]}')
         print(f'Player 1 book odds: {df.loc[i, "p1_book_odds"]:.2f}')
