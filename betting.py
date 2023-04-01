@@ -43,10 +43,10 @@ class Net3(nn.Module):
     x = torch.sigmoid(self.fc8(x))
     return x
 
-def import_odds(start_year, end_year, start_date):
+def import_odds(start_year, end_date, start_date):
     dfs = []
-    if (end_year - start_year) > 0:
-        for i in range(start_year, end_year):
+    if (end_date.year - start_date.year) > 0:
+        for i in range(start_year, end_date.year):
             odds = pd.read_excel(f'http://www.tennis-data.co.uk/{i}/{i}.xlsx', parse_dates=['Date'])
             dfs.append(odds)
         df = pd.concat(dfs, ignore_index=True)
@@ -54,48 +54,42 @@ def import_odds(start_year, end_year, start_date):
         return df
     else:
         print(start_year)
-        odds = pd.read_excel(f'http://www.tennis-data.co.uk/{start_year}/{start_year}.xlsx', parse_dates=['Date'])
+        odds = pd.read_excel(f'http://www.tennis-data.co.uk/{start_date.year}/{start_date.year}.xlsx', parse_dates=['Date'])
         df = pd.DataFrame(odds)
         return df
 
-def clean_odds(df):
+def clean_odds(df, start_date, end_date):
     start_count = df.shape[0]
     df = df[(df.Comment == 'Completed')]
     end_count = df.shape[0]
-    print(df.shape[0])
-
     print(f'Removed {start_count - end_count} matches that were not completed')
+
+    df['Date'] = pd.to_datetime(df['Date'])
+
+    df = df[(df['Date'] >= start_date) & (df['Date'] < end_date)]
+    end2_count = df.shape[0]
+    print(f'Removed {end_count - end2_count} matches that were outside the date range')
+    print(f'remaining in odds df: {df.shape[0]}')
     return df
 
 def import_players():
     players = pd.read_csv(f'{wd}/Data/player_data.csv', parse_dates=['dob'])
     return players
 
-def import_matches(start_year):
+def import_matches(start_date, end_date):
     match_df = pd.read_parquet(f'{wd}/Data/output_df.parquet.gzip')
 
-    print(f'yo')
     for i in range(1,34):
         match_df = match_df.drop([f'p1_seed_{i}'], axis=1)
         match_df = match_df.drop([f'p2_seed_{i}'], axis=1)
 
     match_df = match_df.drop(['p1_seed_35', 'p2_seed_34', 'p2_seed_35'], axis=1)
-    print(f'yo')
 
-    # match_df['tourney_date'] = match_df['tourney_date']
-    # print(f'Match_df shape')
-    # print(match_df.shape[0])
+    # match_df['y_pred_xgboost'] = xgboost_inference(match_df, match_df[match_df.tourney_date <= pd.to_datetime(start_year, format='%Y')].count()/match_df.shape[0], 8)
 
-
-    match_df['y_pred_xgboost'] = xgboost_inference(match_df, match_df[match_df.tourney_date <= pd.to_datetime(start_year, format='%Y')].count()/match_df.shape[0], 8)
-
-    match_df = match_df[match_df.ATP == 1]
-
-    match_df = match_df[match_df.tourney_date >= pd.to_datetime(start_year, format='%Y')]
-    # print(match_df.shape[0])
-    # match_df = match_df[match_df.best_of_3 == 0]
-    # print(match_df.shape[0])
-
+    # match_df = match_df[match_df.ATP == 1]
+    #
+    # match_df = match_df[(match_df.tourney_date >= start_date) & (match_df.tourney_date < end_date)]
 
     return match_df
 
@@ -114,6 +108,8 @@ def index_players(odds_df, player_df):
 
 def match_index(match_df, odds_df, player_df):
     df = match_df.copy()
+    print(f'Accuracy is {(df.y_pred.round() == df.winner).mean()}')
+    df = df[df['best_of_3'] == 0]
     mask = (df.winner == 1)
     # print(df.head(10))
     df['winner_name'] = ''
@@ -233,62 +229,112 @@ def load_model(name, model_type):
         # print(values, "\t", model.state_dict()[values])
     return model
 
-def inference(match_df, model):
+def inference(match_df, model, boost_iterations, model_type, nn_iteration_type, start_date, end_date, ATP_only):
     df = match_df.copy()
     # print(df.head(20))
-    X = df.drop(['p1_seed', 'p1_ht', 'p2_seed', 'p2_ht', 'p1_rank',
-       'p1_rank_points', 'p2_rank', 'p2_rank_points', 'p1_home',
-       'p2_home', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games','index','level_0','tourney_id','tourney_name','surface',
-                          'draw_size',
-                          'tourney_level',
-                          'tourney_date',
-                          'match_num',
-                          'p1_id',
-                          'p1_name',
-                          'p1_hand',
-                          # 'p1_ht',
-                          'p1_ioc',
-                          # 'p1_age',
-                          'p2_id',
-                          'p2_name',
-                          'p2_hand',
-                          # 'p2_ht',
-                          'p2_ioc',
-                          # 'p2_age',
-                          'score',
-                          'best_of',
-                          'round',
-                          'minutes',
-                          'tournament_search',
-                          'city',
-                          'country_code',
-                          'p1_score',
-                          'p2_score',
-                          'p1_entry',
-                          'p2_entry','winner','winner_name','loser_name','winner_id','loser_id','PSW','PSL','ps_winner_odds','ps_loser_odds', 'y_pred_xgboost'],axis=1)
+    df = df.drop(['p1_seed', 'p1_ht', 'p2_seed', 'p2_ht', 'p1_rank',
+           'p1_rank_points', 'p2_rank', 'p2_rank_points', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games'], axis=1)
 
-    sc = StandardScaler()
-    # print(X['p1_time_oncourt_last_match'].head(10))
-    # var = 'time_oncourt_last_match'
-    # X['p1_time_oncourt_last_match']= shuffle(X['p1_time_oncourt_last_match'], random_state=20)
-    # for player in ['p1','p2']:
-    #     X.loc[:,[f'{player}_{var}']] = shuffle(X.loc[:,[f'{player}_{var}']],random_state=420)
-    # print(X['p1_time_oncourt_last_match'].head(10))
-    X = sc.fit_transform(X)
-    with torch.no_grad():
-        y_pred = model(torch.tensor(X, dtype=torch.float32))
-    df['y_pred'] = y_pred.detach().numpy()
+    # df = df.drop(['dt_index'], axis=1)
 
-    # df['y_pred'] = (df['y_pred_xgboost'])
-    print(df.head(40))
+    X = df.drop(['index','level_0','tourney_id','tourney_name','surface',
+                              'draw_size',
+                              'tourney_level',
+                              'match_num',
+                              'p1_id',
+                              'p1_name',
+                              'p1_hand',
+                              # 'p1_ht',
+                              'p1_ioc',
+                              # 'p1_age',
+                              'p2_id',
+                              'p2_name',
+                              'p2_hand',
+                              # 'p2_ht',
+                              'p2_ioc',
+                              # 'p2_age',
+                              'score',
+                              'best_of',
+                              'round',
+                              'minutes',
+                              'tournament_search',
+                              'city',
+                              'country_code',
+                              'p1_score',
+                              'p2_score',
+                              'p1_entry',
+                              'p2_entry',
+                              'winner'
+                              ],axis=1)
+
+    X = X.drop(['dt_index'], axis=1)
+
+    # for i in range(1,34):
+    #     match_df = match_df.drop([f'p1_seed_{i}'], axis=1)
+    #     match_df = match_df.drop([f'p2_seed_{i}'], axis=1)
+    #
+    # match_df = match_df.drop(['p1_seed_35', 'p2_seed_34', 'p2_seed_35'], axis=1)
+
+    print(X.shape[0])
+
+    num_months = 12 * (end_date.year - pd.to_datetime(start_date).year) + end_date.month - pd.to_datetime(start_date).month
+
+    cutoff_date = start_date
+
+    print(f'Number of periods: {num_months}')
+    combined_preds = []
+    for i in range(num_months):
+
+        if nn_iteration_type == 'months':
+            next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(31, 'D')).replace(day=1)
+
+        print(f'Period {i+1}....')
+        print(f'Cutoff date {cutoff_date}')
+        print(f'Cutoff date {next_cutoff_date}')
+
+        X_train = X[X['tourney_date'] < cutoff_date]
+        X_test = X[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
+
+        if ATP_only == 1:
+            X_test = X_test[X_test.ATP == 1]
+
+        print(f'Number of test samples: {X_test.shape[0]}')
+
+        X_test = X_test.drop(['tourney_date'], axis=1)
+        X_train = X_train.drop(['tourney_date'], axis=1)
+
+
+        if len(X_test) > 0:
+            sc = StandardScaler()
+            # print(X_train.head(10))
+            # print(X_train.shape[1])
+            X_train = sc.fit_transform(X_train)
+            X_test = sc.transform(X_test)
+            model = load_model(f'model_{cutoff_date.year}{cutoff_date.month}_{next_cutoff_date.year}{next_cutoff_date.month}', model_type)
+            model.eval()
+            with torch.no_grad():
+                y_pred = model(torch.tensor(X_test, dtype=torch.float32))
+            preds = y_pred.detach().numpy()
+            for pred in preds:
+                combined_preds.append(float(pred))
+
+        cutoff_date = next_cutoff_date
+
+    df['y_pred'] = 0
+    print(len(df[(df['tourney_date'] >= start_date) & (df['tourney_date'] < end_date)]))
+    print(len(combined_preds))
+    df = df[(df['tourney_date'] >= start_date) & (df['tourney_date'] < end_date) & (df['ATP'] == 1)]
+    df['y_pred'] = combined_preds
+    # print(type(df.loc[0,'y_pred']))
+    # print(df.head(40))
+    # print(df.dtypes)
     return df
 
 def xgboost_inference(df, train_percent, iterations):
 
     print('yo')
     X = df.drop(['p1_seed', 'p1_ht', 'p2_seed', 'p2_ht', 'p1_rank',
-       'p1_rank_points', 'p2_rank', 'p2_rank_points', 'p1_home',
-       'p2_home', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games','index','level_0','tourney_id','tourney_name','surface',
+       'p1_rank_points', 'p2_rank', 'p2_rank_points', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games','index','level_0','tourney_id','tourney_name','surface',
                           'draw_size',
                           'tourney_level',
                           'tourney_date',
@@ -441,12 +487,12 @@ def graphing(bankrolls, dates):
 
 def main():
     start_year = 2019
-    start_date = pd.to_datetime('20190101',format='%Y%m%d')
-    end_year = 2019
+    start_date = pd.to_datetime('20220101',format='%Y%m%d')
+    end_year = pd.to_datetime('20221231',format='%Y%m%d')
     odds_df = import_odds(start_year, end_year, start_date)
     # print(odds_df.head(10))
-    odds_df = clean_odds(odds_df)
-    match_df = import_matches(start_year)
+    odds_df = clean_odds(odds_df, start_date, end_year)
+    match_df = import_matches(start_date, end_year)
     # print(match_df.head(50))
     # match_df = match_index(match_df, odds_df)
 
@@ -455,14 +501,20 @@ def main():
     player_df = index_players(odds_df, player_df)
     # print(player_df.head(10))
 
-    match_df = match_index(match_df, odds_df, player_df)
 
     model_name = 'model_4layers_batch64lr0.005_0.68346'
-    model_type = Net4(input_shape=121, input_p=.2, p=.2)
-    model = load_model(model_name, model_type)
+    model_type = Net4(input_shape=123, input_p=.2, p=.2)
+    # model = load_model(model_name, model_type)
+    model = ''
 
     boost_iterations = 6
-    match_df = inference(match_df, model, boost_iterations)
+    nn_iteration_type = 'months'
+    ATP_only = 1
+    match_df = inference(match_df, model, boost_iterations, model_type, nn_iteration_type, start_date, end_year, ATP_only)
+
+    match_df = match_index(match_df, odds_df, player_df)
+
+
     match_df = betting_calc(match_df)
     bankroll = 1
     fraction = .03
