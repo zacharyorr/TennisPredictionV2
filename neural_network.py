@@ -136,22 +136,22 @@ class Net4(nn.Module):
 
   def forward(self,x):
     x = torch.relu(self.fc1(x))
-    x = self.dropout(x)
+    # x = self.dropout(x)
 
     x = torch.relu(self.fc2(x))
-    x = self.dropout(x)
+    # x = self.dropout(x)
 
     x = torch.relu(self.fc3(x))
-    x = self.dropout(x)
+    # x = self.dropout(x)
 
     x = torch.relu(self.fc4(x))
-    x = self.dropout(x)
+    # x = self.dropout(x)
 
     x = torch.relu(self.fc5(x))
-    x = self.dropout(x)
+    # x = self.dropout(x)
 
     x = torch.relu(self.fc6(x))
-    x = self.dropout(x)
+    # x = self.dropout(x)
 
     x = torch.relu(self.fc7(x))
     # x = self.dropout(x)
@@ -205,6 +205,8 @@ def feature_extraction(match_df, test_year, test_end):
 
     match_df = match_df[match_df.tourney_date < pd.to_datetime(test_end, format='%Y-%m-%d')]
 
+    print(match_df.head(10))
+
     train_size = match_df[match_df['tourney_date'] < pd.to_datetime(test_year, format='%Y-%m-%d')].shape[0] / match_df.shape[0]
     print(f'Train split: {train_size*100:.2f}%')
     print(f'Test split: {(1-train_size)*100:.2f}%')
@@ -229,19 +231,19 @@ def feature_extraction(match_df, test_year, test_end):
                               'best_of',
                               'round',
                               'minutes',
-                              'tournament_search',
-                              'city',
                               'country_code',
                               'p1_score',
                               'p2_score',
                               'p1_entry',
-                              'p2_entry'
+                              'p2_entry',
+                              'country_code',
+                              'city_name'
                               ],axis=1)
 
     match_df = match_df.drop(['p1_seed', 'p1_ht', 'p2_seed', 'p2_ht', 'p1_rank',
            'p1_rank_points', 'p2_rank', 'p2_rank_points', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games'], axis=1)
 
-
+    match_df = match_df.drop(['BR', 'ER', 'F', 'Q1', 'Q2', 'Q3', 'Q4', 'QF', 'R128', 'R16', 'R32', 'R64', 'RR', 'SF'], axis=1)
 
     # match_df = match_df.drop(['p1_time_oncourt_last_match','p1_time_oncourt_last_3_matches','p1_time_oncourt_last_2_weeks',
     #                           'p2_time_oncourt_last_match','p2_time_oncourt_last_3_matches','p2_time_oncourt_last_2_weeks'],axis=1)
@@ -294,6 +296,8 @@ def feature_extraction(match_df, test_year, test_end):
         match_df = match_df.drop([f'p2_seed_{i}'], axis=1)
 
     match_df = match_df.drop(['p1_seed_35', 'p2_seed_34', 'p2_seed_35'], axis=1)
+
+    # match_df = match_df.drop(['tournament_search', 'city'], axis=1)
     #
     # match_df = match_df.drop(['F', 'SF', 'QF', 'R128', 'R64', 'R32', 'R16', 'RR', 'BR', 'ER', 'Q1', 'Q2', 'Q3', 'Q4'], axis=1)
 
@@ -358,22 +362,17 @@ def train_test_split_df_months(match_df, train_percent, ATP_only, max_date, max_
             next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(7, 'D')).replace(day=1)
         if iterations == 'years':
             next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(1, 'Y')).replace(day=1)
-        print(f'Period {i+1}....')
-        print(f'Cutoff date {cutoff_date}')
-        print(f'Cutoff date {next_cutoff_date}')
-
 
         X_train = X[X['tourney_date'] < cutoff_date]
         y_train = y[X['tourney_date'] < cutoff_date]
 
-        X_test = X[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
-        y_test = y[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
-        baseline_test = baseline_x[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
+        X_test = X[(X['tourney_date'] >= cutoff_date)]
+        y_test = y[(X['tourney_date'] >= cutoff_date)]
 
-        print(f'Number of test samples: {X_test.shape[0]}')
+        preds_len = len(X[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date) & (X['ATP'] == 1)])
 
-        # print(X_train['tourney_date'].max())
-        # print(X_test['tourney_date'].min())
+        baseline_test = baseline_x[(X['tourney_date'] >= cutoff_date)]
+
 
         X_test = X_test.drop(['tourney_date'], axis=1)
         X_train = X_train.drop(['tourney_date'], axis=1)
@@ -395,7 +394,7 @@ def train_test_split_df_months(match_df, train_percent, ATP_only, max_date, max_
             best_acc, preds = run_nn(X_train, X_test, y_train, y_test, baseline_test, X, y, num_epochs, batch_size, lr, nn_model, name, momentum, nesterov, cutoff_date, next_cutoff_date, patience)
 
             accs.append(best_acc)
-            for pred in preds:
+            for pred in preds[:preds_len]:
                 combined_preds.append(pred)
 
         cutoff_date = next_cutoff_date
@@ -414,8 +413,8 @@ def run_nn(X_train, X_test, y_train, y_test, baseline_test, X, y, num_epochs, ba
     trainset = dataset(X_train,y_train)
     trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=False, pin_memory=True)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-    # optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate, momentum=m, nesterov=n)
+    # optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.SGD(model.parameters(),lr=learning_rate, momentum=m, nesterov=n)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=.8)
     loss_fn = nn.BCELoss()
     early_stopper = EarlyStopper(patience=patience, minima_patience=5, min_delta=.001)
@@ -475,7 +474,7 @@ def run_nn(X_train, X_test, y_train, y_test, baseline_test, X, y, num_epochs, ba
 
 
         model.train()
-        scheduler.step()
+        # scheduler.step()
 
 
         losses.append(loss)
@@ -518,7 +517,7 @@ def run_nn(X_train, X_test, y_train, y_test, baseline_test, X, y, num_epochs, ba
     plt.clf()
 
     print(f'Saving model to : {wd}/models/model_{period_start.year}{period_start.month}_{period_end.year}{period_end.month}.pth')
-    torch.save(best_model.state_dict(), f'{wd}/models/model_{period_start.year}{period_start.month}_{period_end.year}{period_end.month}.pth')
+    torch.save(best_model.state_dict(), f'{wd}/models/model_{learning_rate}_online_{period_start.year}{period_start.month}_{period_end.year}{period_end.month}.pth')
     model.eval()
     with torch.no_grad():
         predicted = best_model(X_test)
@@ -607,8 +606,8 @@ def xgboost(X, y, params, n, y_test_total, early_stopping, train_percent, iterat
 def main():
     match_df = import_data()
 
-    test_cutoff = '2022-12-01'
-    test_end = '2023-01-01'
+    test_cutoff = '2015-01-01'
+    test_end = '2019-01-01'
     max_date = match_df['tourney_date'].max()
     print(max_date)
     match_df, train_percent = feature_extraction(match_df, test_cutoff, test_end)
@@ -628,20 +627,65 @@ def main():
     batch_size = 64
     torch.manual_seed(0)
     # learning_rate = .1
-    learning_rates = [.001]
+    learning_rates = [.00025, .0002, .0001]
     accs = []
     name = '5'
-    input_p = .2
-    ps = [.2, .1, .2, .3, .4, .5, .6, .7]
+    input_p = 0
+    ps = [0, .3, .4, .5, .6, .7]
     momentum = .9
     nesterov = True
-    patience = 7
+    patience = 20
     print(f'xshape: {X.shape[1]}')
     nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=ps[0]).to(device)
     torch.cuda.synchronize()
 
     if iterations == 'months':
         train_test_split_df_months(match_df, train_percent, ATP_only, max_date, test_end, test_cutoff, iterations, num_epochs, batch_size, learning_rates[0], nn_model, name, momentum, nesterov, patience)
+
+    nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=ps[0]).to(device)
+    torch.cuda.synchronize()
+
+    if iterations == 'months':
+        train_test_split_df_months(match_df, train_percent, ATP_only, max_date, test_end, test_cutoff, iterations, num_epochs, batch_size, learning_rates[1], nn_model, name, momentum, nesterov, patience)
+
+    nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=ps[0]).to(device)
+    torch.cuda.synchronize()
+
+    if iterations == 'months':
+        train_test_split_df_months(match_df, train_percent, ATP_only, max_date, test_end, test_cutoff, iterations, num_epochs, batch_size, learning_rates[2], nn_model, name, momentum, nesterov, patience)
+
+    nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=ps[0]).to(device)
+    torch.cuda.synchronize()
+
+    if iterations == 'months':
+        train_test_split_df_months(match_df, train_percent, ATP_only, max_date, test_end, test_cutoff, iterations, num_epochs, batch_size, learning_rates[3], nn_model, name, momentum, nesterov, patience)
+
+    nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=ps[0]).to(device)
+    torch.cuda.synchronize()
+
+    if iterations == 'months':
+        train_test_split_df_months(match_df, train_percent, ATP_only, max_date, test_end, test_cutoff, iterations, num_epochs, batch_size, learning_rates[4], nn_model, name, momentum, nesterov, patience)
+
+    nn_model = Net4(input_shape=X.shape[1], input_p=input_p, p=ps[0]).to(device)
+    torch.cuda.synchronize()
+
+    if iterations == 'months':
+        train_test_split_df_months(match_df, train_percent, ATP_only, max_date, test_end, test_cutoff, iterations, num_epochs, batch_size, learning_rates[5], nn_model, name, momentum, nesterov, patience)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     #

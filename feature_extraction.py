@@ -1617,13 +1617,13 @@ def main():
     # match_df = match_df[700000:]
 
     # pull rankings and append to dataframe
-    # match_df = set_h2h(match_df, rankings_df)
+    match_df = set_h2h(match_df, rankings_df)
 
     # calculates player scores to input into Glicko-2 ranking system
     winner_weight = .6
     sets_weight = .2
     games_weight = .2
-    # match_df = winner_points(match_df, winner_weight, sets_weight, games_weight)
+    match_df = winner_points(match_df, winner_weight, sets_weight, games_weight)
 
 
     # using the following input parameters, calculates the Glicko-2 ratings of players in dataset
@@ -1633,25 +1633,25 @@ def main():
     rating_period = 40
     show_rankings = 100
     rd_cutoff = 80
-    # match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
+    match_df = gluck_gluck2(match_df, initial_rating, initial_deviation, initial_volatility, rating_period, show_rankings, rd_cutoff)
 
 
     # adds date features (year, sin(day), cos(day)) to the dataframe
-    # match_df = date_features(match_df)
+    match_df = date_features(match_df)
 
     # consolidates all tournament levels into 'ATP', 'C', and 'S'
-    # match_df = tourney_level(match_df)
+    match_df = tourney_level(match_df)
 
     # calculates a rolling sum of p1/p2 wins and losses at all levels in the following time periods
     time_periods = ['l6m', 'l1y', 'career']
     rolling_windows = ['182d', '365d', '30000d']
-    # match_df = player_wins(match_df, time_periods, rolling_windows)
+    match_df = player_wins(match_df, time_periods, rolling_windows)
 
 
     # calculates a rolling sum of p1/p2 wins and losses at their current tournament in the following time periods
     time_periods = ['l6m', 'l3y', 'career']
     rolling_windows = ['182d', '1095d', '30000d']
-    # match_df = tourney_history2(match_df, time_periods, rolling_windows)
+    match_df = tourney_history2(match_df, time_periods, rolling_windows)
 
     # calculates a rolling sum of time on court for all players in the following time periods.
     # fills missing match time data with averages; rounds match_games to games_base and rounds year to year_base
@@ -1659,13 +1659,13 @@ def main():
     year_base = 10
     time_periods = ['last_match', 'last_3_matches', 'last_2_weeks']
     rolling_windows = [1, 3, '14d']
-    # match_df = time_on_court(match_df, games_base, year_base, time_periods, rolling_windows)
+    match_df = time_on_court(match_df, games_base, year_base, time_periods, rolling_windows)
 
     # adds momentum in the form of win and loss streak
-    # match_df = momentum(match_df)
+    match_df = momentum(match_df)
 
     # adds one-hot variables for surface type
-    # match_df = surfaces(match_df)
+    match_df = surfaces(match_df)
 
     # using the following input parameters, calculates the Glicko-2 ratings of players in dataset on match surface
     initial_rating = 2300
@@ -1677,28 +1677,28 @@ def main():
     Carpet_rating_period = 360
     show_rankings = 20
     rd_cutoff = 100
-    # match_df = gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff)
+    match_df = gluck_gluck_surface(match_df, initial_rating, initial_deviation, initial_volatility, Hard_rating_period, Grass_rating_period, Clay_rating_period, Carpet_rating_period, show_rankings, rd_cutoff)
 
     # calculates player strength on surface (wins and losses)
-    # match_df = surface_wins(match_df)
+    match_df = surface_wins(match_df)
 
     # calculates player ages
-    # match_df = player_age(match_df)
+    match_df = player_age(match_df)
 
     # calculates the length of time a player has been inactive
-    # match_df = player_inactive_period(match_df)
+    match_df = player_inactive_period(match_df)
 
     # creates dummy variables for the current round of the match
-    # match_df = round_dummies(match_df)
+    match_df = round_dummies(match_df)
 
     # creates dummy variables for each player's seed
-    # match_df = seed_dummies(match_df)
+    match_df = seed_dummies(match_df)
 
     # splits the dataframe, for half of the dataset, makes p1 the winner, and for the other half, makes p2 the winner
-    # match_df = split_df_2(match_df)
+    match_df = split_df_2(match_df)
 
     # saves the dataframe as a parquet, outputs necessary features to the neural network
-    # to_parquet(match_df)
+    to_parquet(match_df)
 
     # print(match_df[(match_df.p1_id == 104925) | (match_df.p2_id == 104925)].head(100))
     # print(match_df[(((match_df.p1_id == 104259) | (match_df.p2_id == 104259)) & (match_df.tourney_name == 'Dubai'))].head(100))

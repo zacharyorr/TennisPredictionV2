@@ -46,14 +46,15 @@ class Net3(nn.Module):
 def import_odds(start_year, end_date, start_date):
     dfs = []
     if (end_date.year - start_date.year) > 0:
-        for i in range(start_year, end_date.year):
+        for i in range(start_date.year, end_date.year+1):
+            print(i)
             odds = pd.read_excel(f'http://www.tennis-data.co.uk/{i}/{i}.xlsx', parse_dates=['Date'])
             dfs.append(odds)
         df = pd.concat(dfs, ignore_index=True)
         df = df[df.Date > start_date]
         return df
     else:
-        print(start_year)
+        print(start_date)
         odds = pd.read_excel(f'http://www.tennis-data.co.uk/{start_date.year}/{start_date.year}.xlsx', parse_dates=['Date'])
         df = pd.DataFrame(odds)
         return df
@@ -76,7 +77,7 @@ def import_players():
     players = pd.read_csv(f'{wd}/Data/player_data.csv', parse_dates=['dob'])
     return players
 
-def import_matches(start_date, end_date):
+def import_matches(start_date, end_date, filter_tour_finals, filter_january):
     match_df = pd.read_parquet(f'{wd}/Data/output_df.parquet.gzip')
 
     for i in range(1,34):
@@ -84,6 +85,14 @@ def import_matches(start_date, end_date):
         match_df = match_df.drop([f'p2_seed_{i}'], axis=1)
 
     match_df = match_df.drop(['p1_seed_35', 'p2_seed_34', 'p2_seed_35'], axis=1)
+
+    if filter_january == True:
+        match_df = match_df[~(match_df.tourney_name.isin(['Australian Open', 'Adelaide 1', 'Adelaide 2', 'Sydney', 'Melbourne']))]
+
+    if filter_tour_finals == True:
+        match_df = match_df[~(match_df.tourney_name == 'Tour Finals')]
+
+    # match_df = match_df[~(match_df.tourney_date ==)]
 
     # match_df['y_pred_xgboost'] = xgboost_inference(match_df, match_df[match_df.tourney_date <= pd.to_datetime(start_year, format='%Y')].count()/match_df.shape[0], 8)
 
@@ -109,7 +118,7 @@ def index_players(odds_df, player_df):
 def match_index(match_df, odds_df, player_df):
     df = match_df.copy()
     print(f'Accuracy is {(df.y_pred.round() == df.winner).mean()}')
-    df = df[df['best_of_3'] == 0]
+    # df = df[df['best_of_3'] == 0]
     mask = (df.winner == 1)
     # print(df.head(10))
     df['winner_name'] = ''
@@ -229,13 +238,16 @@ def load_model(name, model_type):
         # print(values, "\t", model.state_dict()[values])
     return model
 
-def inference(match_df, model, boost_iterations, model_type, nn_iteration_type, start_date, end_date, ATP_only):
+def inference(match_df, model, boost_iterations, model_type, nn_iteration_type, start_date, end_date, ATP_only, learning_rate):
     df = match_df.copy()
     # print(df.head(20))
     df = df.drop(['p1_seed', 'p1_ht', 'p2_seed', 'p2_ht', 'p1_rank',
            'p1_rank_points', 'p2_rank', 'p2_rank_points', 'tourney_level_consolidated', 'tourney_code_no_year','total_games_rounded', 'decade', 'total_games'], axis=1)
 
     # df = df.drop(['dt_index'], axis=1)
+
+    df = df.drop(['BR', 'ER', 'F', 'Q1', 'Q2', 'Q3', 'Q4', 'QF', 'R128', 'R16', 'R32', 'R64', 'RR', 'SF'], axis=1)
+
 
     X = df.drop(['index','level_0','tourney_id','tourney_name','surface',
                               'draw_size',
@@ -257,8 +269,9 @@ def inference(match_df, model, boost_iterations, model_type, nn_iteration_type, 
                               'best_of',
                               'round',
                               'minutes',
-                              'tournament_search',
-                              'city',
+                              # 'tournament_search',
+                              # 'city',
+                              'city_name',
                               'country_code',
                               'p1_score',
                               'p2_score',
@@ -288,9 +301,9 @@ def inference(match_df, model, boost_iterations, model_type, nn_iteration_type, 
         if nn_iteration_type == 'months':
             next_cutoff_date = (pd.to_datetime(cutoff_date) + np.timedelta64(31, 'D')).replace(day=1)
 
-        print(f'Period {i+1}....')
-        print(f'Cutoff date {cutoff_date}')
-        print(f'Cutoff date {next_cutoff_date}')
+        print(f'Period {i+1}: ({cutoff_date.year}-{cutoff_date.month} to {next_cutoff_date.year}-{next_cutoff_date.month})')
+        # print(f'Cutoff date {cutoff_date}')
+        # print(f'Cutoff date {next_cutoff_date}')
 
         X_train = X[X['tourney_date'] < cutoff_date]
         X_test = X[(X['tourney_date'] >= cutoff_date) & (X['tourney_date'] < next_cutoff_date)]
@@ -310,7 +323,7 @@ def inference(match_df, model, boost_iterations, model_type, nn_iteration_type, 
             # print(X_train.shape[1])
             X_train = sc.fit_transform(X_train)
             X_test = sc.transform(X_test)
-            model = load_model(f'model_{cutoff_date.year}{cutoff_date.month}_{next_cutoff_date.year}{next_cutoff_date.month}', model_type)
+            model = load_model(f'model_{learning_rate}_{cutoff_date.year}{cutoff_date.month}_{next_cutoff_date.year}{next_cutoff_date.month}', model_type)
             model.eval()
             with torch.no_grad():
                 y_pred = model(torch.tensor(X_test, dtype=torch.float32))
@@ -389,7 +402,7 @@ def xgboost_inference(df, train_percent, iterations):
     return results
 
 
-def fractional_kelly(match_df, bankroll, fraction):
+def fractional_kelly(match_df, bankroll, fraction, underdog_threshold, overdog_threshold, graph):
     bankrolls = []
     dates = []
     df = match_df.copy().reset_index(drop=True)
@@ -423,7 +436,7 @@ def fractional_kelly(match_df, bankroll, fraction):
 
             f = fraction * (p - (q/b))
 
-            if f > 0:
+            if ((f > 0) & ((b > underdog_threshold) | (b < overdog_threshold))):
                 count += 1
                 bet_size = f * bankroll
                 print(f'Betting {bet_size:.2f} on {player}')
@@ -438,7 +451,13 @@ def fractional_kelly(match_df, bankroll, fraction):
         dates.append(df.loc[i,'tourney_date'])
         bankrolls.append(bankroll)
     print(f'% winning bets: {correct*100/count:.2f}%\n')
-    return bankrolls, dates
+
+    if graph == True:
+        graphing(bankrolls, dates)
+
+    return bankroll
+
+    # return bankrolls, dates
 
 
 
@@ -485,16 +504,20 @@ def graphing(bankrolls, dates):
     fig.savefig(f'{wd}/bankrolls.png')
 
 
+
+
 def main():
     start_year = 2019
-    start_date = pd.to_datetime('20220101',format='%Y%m%d')
-    end_year = pd.to_datetime('20221231',format='%Y%m%d')
+    start_date = pd.to_datetime('20150101',format='%Y%m%d')
+    end_year = pd.to_datetime('20180101',format='%Y%m%d')
     odds_df = import_odds(start_year, end_year, start_date)
     # print(odds_df.head(10))
     odds_df = clean_odds(odds_df, start_date, end_year)
-    match_df = import_matches(start_date, end_year)
-    # print(match_df.head(50))
-    # match_df = match_index(match_df, odds_df)
+
+    filter_tour_finals = True
+    filter_january = True
+
+    match_df = import_matches(start_date, end_year, filter_tour_finals, filter_january)
 
     player_df = import_players()
     # print(player_df.head(10))
@@ -503,22 +526,50 @@ def main():
 
 
     model_name = 'model_4layers_batch64lr0.005_0.68346'
-    model_type = Net4(input_shape=123, input_p=.2, p=.2)
+    model_type = Net4(input_shape=109, input_p=0, p=0)
     # model = load_model(model_name, model_type)
     model = ''
 
     boost_iterations = 6
     nn_iteration_type = 'months'
     ATP_only = 1
-    match_df = inference(match_df, model, boost_iterations, model_type, nn_iteration_type, start_date, end_year, ATP_only)
+    learning_rate = 0.00025
+    match_df = inference(match_df, model, boost_iterations, model_type, nn_iteration_type, start_date, end_year, ATP_only, learning_rate)
 
     match_df = match_index(match_df, odds_df, player_df)
 
 
     match_df = betting_calc(match_df)
     bankroll = 1
-    fraction = .03
-    bankrolls, dates = fractional_kelly(match_df, bankroll, fraction)
-    graphing(bankrolls, dates)
+    final_bankrolls = []
+    fractions = [.08]
+    # fraction = .1
+    underdog_thresholds = [0]
+    # underdog_thresholds = [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3]
+
+    overdog_thresholds = [100]
+    # overdog_thresholds = [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3]
+
+    max_bankroll = 0
+    underdog_thresh = 0
+    over_thresh = 0
+
+    graph = True
+    for fraction in fractions:
+        for underdog_threshold in underdog_thresholds:
+            for overdog_threshold in overdog_thresholds:
+                final_bankroll = fractional_kelly(match_df, bankroll, fraction, underdog_threshold, overdog_threshold, graph)
+                final_bankrolls.append(final_bankroll)
+                if final_bankroll > max_bankroll:
+                    max_bankroll = final_bankroll
+                    underdog_thresh = underdog_threshold
+                    over_thresh = overdog_threshold
+
+    print(underdog_thresholds)
+    print(final_bankrolls)
+    print(max_bankroll)
+    print(underdog_thresh)
+    print(over_thresh)
+    # graphing(bankrolls, dates)
 
 main()
